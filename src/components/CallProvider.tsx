@@ -138,7 +138,7 @@ export default function CallProvider({
       }
 
       call.on("app-message", (ev) => {
-        if (!ev?.data?.label || ev.data.label !== "rtvi-ai") return;
+        if (!ev?.data?.label || ev.data.label !== "outrival") return;
         const msg = ev.data;
         const fromId = ev.fromId;
         const speaker = participantsRef.current[fromId] || "Unknown";
