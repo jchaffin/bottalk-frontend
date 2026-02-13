@@ -25,7 +25,7 @@ async function createDailyRoom(): Promise<{ url: string; name: string }> {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      properties: { exp: Math.floor(Date.now() / 1000) + 600 },
+      properties: { exp: Math.floor(Date.now() / 1000) + 120 },
     }),
   });
   if (!res.ok) throw new Error(`Daily room creation failed: ${res.status}`);
@@ -33,14 +33,16 @@ async function createDailyRoom(): Promise<{ url: string; name: string }> {
   return { url: data.url, name: data.name };
 }
 
-async function getDailyToken(roomName: string): Promise<string> {
+async function getDailyToken(roomName: string, isOwner = false): Promise<string> {
   const res = await fetch("https://api.daily.co/v1/meeting-tokens", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${DAILY_API_KEY}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ properties: { room_name: roomName } }),
+    body: JSON.stringify({
+      properties: { room_name: roomName, is_owner: isOwner },
+    }),
   });
   if (!res.ok) throw new Error(`Daily token creation failed: ${res.status}`);
   const data = await res.json();
@@ -124,12 +126,16 @@ export async function POST(request: NextRequest) {
 
     const allNames = [agent1.name, agent2.name];
 
+    // Max LLM turns per agent — hard ceiling to prevent runaway API usage.
+    const maxTurns = 20;
+
     // 1. Create a Daily room
     const room = await createDailyRoom();
 
     // 2. Generate tokens
+    // Agent 1 (goes_first) needs is_owner to call start_transcription.
     const [token1, token2, browserToken] = await Promise.all([
-      getDailyToken(room.name),
+      getDailyToken(room.name, true),
       getDailyToken(room.name),
       getDailyToken(room.name),
     ]);
@@ -144,6 +150,7 @@ export async function POST(request: NextRequest) {
       voice_id: agent1.voice_id,
       goes_first: true,
       known_agents: allNames,
+      max_turns: maxTurns,
     });
 
     let session2: { sessionId: string };
@@ -156,6 +163,7 @@ export async function POST(request: NextRequest) {
         voice_id: agent2.voice_id,
         goes_first: false,
         known_agents: allNames,
+        max_turns: maxTurns,
       });
     } catch (err) {
       await stopPCCSession(session1.sessionId);
