@@ -33,14 +33,19 @@ async function createDailyRoom(): Promise<{ url: string }> {
   return res.json();
 }
 
-async function getDailyToken(roomName: string): Promise<string> {
+async function getDailyToken(
+  roomName: string,
+  isOwner = false,
+): Promise<string> {
   const res = await fetch("https://api.daily.co/v1/meeting-tokens", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${DAILY_API_KEY}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ properties: { room_name: roomName } }),
+    body: JSON.stringify({
+      properties: { room_name: roomName, is_owner: isOwner },
+    }),
   });
   if (!res.ok) throw new Error(`Daily token creation failed: ${res.status}`);
   const data = await res.json();
@@ -117,10 +122,10 @@ export async function POST(request: NextRequest) {
     const roomUrl = room.url;
     const roomName = roomUrl.split("/").pop()!;
 
-    // 2. Generate tokens
+    // 2. Generate tokens (agents need is_owner for start_transcription)
     const [token1, token2, browserToken] = await Promise.all([
-      getDailyToken(roomName),
-      getDailyToken(roomName),
+      getDailyToken(roomName, true),
+      getDailyToken(roomName, true),
       getDailyToken(roomName),
     ]);
 
