@@ -87,3 +87,23 @@ export async function startConversation(options: StartOptions): Promise<StartRes
 export async function stopConversation(): Promise<void> {
   await fetch(`${AGENT_API}/api/stop`, { method: "POST" });
 }
+
+/** A scenario as stored in the database. */
+export interface Scenario {
+  id: string;
+  slug: string | null;
+  title: string;
+  description: string | null;
+  builtIn: boolean;
+  agents: AgentPrompt[];
+}
+
+/** Fetch all scenarios from the DB. */
+export async function fetchScenarios(): Promise<Scenario[]> {
+  const res = await fetch(`${NEXT_API}/api/scenarios`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `API error ${res.status}`);
+  }
+  return res.json();
+}

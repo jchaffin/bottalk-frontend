@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import scenarioData from "../../../lib/scenarios.json";
+import prisma from "@/lib/prisma";
 
 const PCC_API = "https://api.pipecat.daily.co/v1/public";
 const PCC_API_KEY = process.env.PIPECAT_CLOUD_API_KEY!;
@@ -18,7 +18,7 @@ interface AgentConfig {
   voice_id?: string;
 }
 
-async function createDailyRoom(): Promise<{ url: string }> {
+async function createDailyRoom(): Promise<{ url: string; name: string }> {
   const res = await fetch("https://api.daily.co/v1/rooms", {
     method: "POST",
     headers: {
@@ -30,22 +30,18 @@ async function createDailyRoom(): Promise<{ url: string }> {
     }),
   });
   if (!res.ok) throw new Error(`Daily room creation failed: ${res.status}`);
-  return res.json();
+  const data = await res.json();
+  return { url: data.url, name: data.name };
 }
 
-async function getDailyToken(
-  roomName: string,
-  isOwner = false,
-): Promise<string> {
+async function getDailyToken(roomName: string): Promise<string> {
   const res = await fetch("https://api.daily.co/v1/meeting-tokens", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${DAILY_API_KEY}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      properties: { room_name: roomName, is_owner: isOwner },
-    }),
+    body: JSON.stringify({ properties: { room_name: roomName } }),
   });
   if (!res.ok) throw new Error(`Daily token creation failed: ${res.status}`);
   const data = await res.json();
@@ -72,30 +68,31 @@ async function startPCCSession(
 
 // --- Route handler ---
 
-let activeSessions: string[] = [];
-
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json().catch(() => ({}));
 
     let agents: [AgentConfig, AgentConfig] | undefined = body.agents;
 
-    // Fallback to scenario templates if no agents array provided
+    // Fallback to scenario from DB if no agents array provided
     if (!agents || agents.length < 2 || !agents[0]?.prompt || !agents[1]?.prompt) {
-      const scenarioKey = body.scenario || scenarioData.default;
+      const scenarioSlug = body.scenario || "sales";
       const topic = body.topic || "enterprise software sales";
-      const scenarios = scenarioData.scenarios as Record<string, any>;
-      const scenario = scenarios[scenarioKey];
+
+      const scenario = await prisma.scenario.findUnique({
+        where: { slug: scenarioSlug },
+      });
 
       if (!scenario) {
         return NextResponse.json(
-          { detail: `Unknown scenario: ${scenarioKey}` },
+          { detail: `Unknown scenario: ${scenarioSlug}` },
           { status: 400 },
         );
       }
 
-      const a1 = scenario.agents[0];
-      const a2 = scenario.agents[1];
+      const scenarioAgents = scenario.agents as any[];
+      const a1 = scenarioAgents[0];
+      const a2 = scenarioAgents[1];
       agents = [
         {
           name: a1.name,
@@ -119,20 +116,17 @@ export async function POST(request: NextRequest) {
 
     // 1. Create a Daily room
     const room = await createDailyRoom();
-    const roomUrl = room.url;
-    const roomName = roomUrl.split("/").pop()!;
 
-    // 2. Generate tokens (agents need is_owner for start_transcription)
+    // 2. Generate tokens
     const [token1, token2, browserToken] = await Promise.all([
-      getDailyToken(roomName, true),
-      getDailyToken(roomName, true),
-      getDailyToken(roomName),
+      getDailyToken(room.name),
+      getDailyToken(room.name),
+      getDailyToken(room.name),
     ]);
 
     // 3. Start both agents on Pipecat Cloud.
-    //    Agent 1 goes first (starts transcription), agent 2 follows.
     const session1 = await startPCCSession({
-      room_url: roomUrl,
+      room_url: room.url,
       token: token1,
       name: agent1.name,
       system_prompt: agent1.prompt,
@@ -142,7 +136,7 @@ export async function POST(request: NextRequest) {
     });
 
     const session2 = await startPCCSession({
-      room_url: roomUrl,
+      room_url: room.url,
       token: token2,
       name: agent2.name,
       system_prompt: agent2.prompt,
@@ -151,9 +145,16 @@ export async function POST(request: NextRequest) {
       known_agents: allNames,
     });
 
-    activeSessions = [session1.sessionId, session2.sessionId];
+    // 4. Persist session to DB (replaces in-memory activeSessions)
+    await prisma.session.create({
+      data: {
+        roomName: room.name,
+        roomUrl: room.url,
+        agentSessions: [session1.sessionId, session2.sessionId],
+      },
+    });
 
-    return NextResponse.json({ roomUrl, token: browserToken });
+    return NextResponse.json({ roomUrl: room.url, token: browserToken });
   } catch (err) {
     console.error("POST /api/start error:", err);
     return NextResponse.json(

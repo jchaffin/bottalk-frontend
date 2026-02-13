@@ -1,0 +1,39 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+/// A reusable conversation scenario with two agent configurations.
+model Scenario {
+  id          String   @id @default(cuid())
+  /// URL-friendly key for built-in scenarios (e.g. "sales", "support").
+  /// NULL for user-created scenarios.
+  slug        String?  @unique
+  title       String
+  description String?
+  /// Whether this is a built-in (shipped with app) scenario.
+  builtIn     Boolean  @default(false) @map("built_in")
+  /// JSON array of two agent configs: [{ name, role, voice_id, goes_first, prompt }]
+  agents      Json
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("scenarios")
+}
+
+/// Tracks active Pipecat Cloud sessions so /api/stop can terminate them.
+model Session {
+  id            String   @id @default(cuid())
+  roomName      String   @map("room_name")
+  roomUrl       String   @map("room_url")
+  /// PCC session IDs for each agent in the room.
+  agentSessions String[] @map("agent_sessions")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@index([roomName])
+  @@map("sessions")
+}

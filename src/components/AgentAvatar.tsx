@@ -22,13 +22,13 @@ export default function AgentAvatar({
           ${color}
           ${speaking
             ? "shadow-[0_0_0_3px_var(--ring),0_0_20px_var(--ring)] scale-105"
-            : "shadow-lg shadow-black/10"
+            : "shadow-lg shadow-shadow-color"
           }
         `}
       >
         {initial}
         {speaking && (
-          <span className="absolute -bottom-1 -right-1 w-3.5 h-3.5 rounded-full bg-green-500 border-2 border-background" />
+          <span className="absolute -bottom-1 -right-1 w-3.5 h-3.5 rounded-full bg-success border-2 border-background" />
         )}
       </div>
       <span className="text-sm font-semibold text-foreground">{name}</span>
