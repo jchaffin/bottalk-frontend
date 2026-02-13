@@ -37,3 +37,15 @@ model Session {
   @@index([roomName])
   @@map("sessions")
 }
+
+/// Saved conversation transcript for replay.
+model Conversation {
+  id         String   @id @default(cuid())
+  title      String
+  agentNames String[] @map("agent_names")
+  /// [{ speaker, text }]
+  lines      Json
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@map("conversations")
+}

@@ -3,14 +3,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import AgentAvatar from "./AgentAvatar";
 import Transcript from "./Transcript";
-import type { TranscriptLine } from "../lib/api";
-
-const AGENT_COLORS = ["bg-accent-agent1", "bg-accent-agent2"] as const;
+import type { TranscriptLine } from "@/lib/api";
+import { AGENT_COLORS, APP_MESSAGE_LABEL } from "@/lib/config";
 
 interface CallProviderProps {
   roomUrl: string;
   token: string;
   agentNames: [string, string];
+  onTranscript?: (lines: { speaker: string; text: string }[]) => void;
   onLeave?: () => void;
 }
 
@@ -18,6 +18,7 @@ export default function CallProvider({
   roomUrl,
   token,
   agentNames,
+  onTranscript,
   onLeave,
 }: CallProviderProps) {
   const [status, setStatus] = useState("Connecting...");
@@ -27,6 +28,10 @@ export default function CallProvider({
   const containerRef = useRef<HTMLDivElement>(null);
   const destroyedRef = useRef(false);
   const participantsRef = useRef<Record<string, string>>({});
+  const onTranscriptRef = useRef(onTranscript);
+  onTranscriptRef.current = onTranscript;
+  const onLeaveRef = useRef(onLeave);
+  onLeaveRef.current = onLeave;
 
   // Build a set of agent names for quick lookup
   const agentNameSet = useRef(new Set(agentNames));
@@ -127,7 +132,7 @@ export default function CallProvider({
       }
 
       call.on("app-message", (ev) => {
-        if (!ev?.data?.label || ev.data.label !== "outrival") return;
+        if (!ev?.data?.label || ev.data.label !== APP_MESSAGE_LABEL) return;
         const msg = ev.data;
         const fromId = ev.fromId;
         const speaker = participantsRef.current[fromId] || "Unknown";
@@ -173,7 +178,9 @@ export default function CallProvider({
       call.on("left-meeting", () => {
         setStatus("Disconnected");
         Object.keys(audioEls).forEach(cleanupAudio);
-        onLeave?.();
+        const toSave = linesSnapshot.map((l) => ({ speaker: l.speaker, text: l.text }));
+        onTranscriptRef.current?.(toSave);
+        onLeaveRef.current?.();
       });
 
       call.join({ url: roomUrl, token })

@@ -1,3 +1,6 @@
+import { VOICES, DEFAULT_VOICE_1, DEFAULT_VOICE_2 } from "./config";
+export { VOICES, DEFAULT_VOICE_1, DEFAULT_VOICE_2 };
+
 // Local dev: set NEXT_PUBLIC_API_URL=http://localhost:8000 to hit dev.py
 // Production (Vercel): leave unset, calls same-origin API routes
 const AGENT_API = process.env.NEXT_PUBLIC_API_URL || "";
@@ -33,17 +36,6 @@ export interface StartOptions {
   agents: [AgentPrompt, AgentPrompt];
 }
 
-/** Available voice presets. */
-export const VOICES = [
-  { id: "21m00Tcm4TlvDq8ikWAM", name: "Sarah",  label: "Sarah (Female)" },
-  { id: "TxGEqnHWrfWFTfGW9XjX", name: "Mike",   label: "Mike (Male)" },
-  { id: "EXAVITQu4vr4xnSDxMaL", name: "Bella",  label: "Bella (Female)" },
-  { id: "ErXwobaYiN019PkySvjV", name: "Antoni", label: "Antoni (Male)" },
-] as const;
-
-export const DEFAULT_VOICE_1 = VOICES[0].id;
-export const DEFAULT_VOICE_2 = VOICES[1].id;
-
 /** Find the best voice for an agent name. Case-insensitive match. */
 export function voiceForName(name: string): string | undefined {
   const lower = name.toLowerCase();
@@ -57,7 +49,7 @@ export function nameForVoice(voiceId: string): string | undefined {
 
 /** Ask the LLM to generate role + prompt pairs for a given topic. */
 export async function generatePrompts(topic: string): Promise<GeneratedPrompts> {
-  const res = await fetch(`${NEXT_API}/api/generate-prompts`, {
+  const res = await fetch(`${NEXT_API}/api/generate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ topic }),
@@ -101,6 +93,50 @@ export interface Scenario {
 /** Fetch all scenarios from the DB. */
 export async function fetchScenarios(): Promise<Scenario[]> {
   const res = await fetch(`${NEXT_API}/api/scenarios`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `API error ${res.status}`);
+  }
+  return res.json();
+}
+
+export interface SavedConversation {
+  id: string;
+  title: string;
+  agentNames: string[];
+  lines: { speaker: string; text: string }[];
+  createdAt: string;
+}
+
+/** Save a conversation transcript. */
+export async function saveTranscript(
+  data: { title: string; agentNames: string[]; lines: { speaker: string; text: string }[] },
+): Promise<SavedConversation> {
+  const res = await fetch(`${NEXT_API}/api/transcripts`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `API error ${res.status}`);
+  }
+  return res.json();
+}
+
+/** Fetch saved conversations. */
+export async function fetchConversations(): Promise<SavedConversation[]> {
+  const res = await fetch(`${NEXT_API}/api/transcripts`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `API error ${res.status}`);
+  }
+  return res.json();
+}
+
+/** Fetch a single conversation by ID. */
+export async function fetchConversation(id: string): Promise<SavedConversation> {
+  const res = await fetch(`${NEXT_API}/api/transcripts/${id}`);
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.detail || `API error ${res.status}`);

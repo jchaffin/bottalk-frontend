@@ -47,7 +47,7 @@ export default function ThemeToggle() {
       onClick={cycle}
       aria-label={`Theme: ${theme}`}
       title={`Theme: ${theme}`}
-      className="fixed top-4 right-4 z-50 w-9 h-9 rounded-xl bg-surface border border-border flex items-center justify-center text-muted hover:text-foreground hover:border-foreground/20 transition-all cursor-pointer"
+      className="w-9 h-9 rounded-xl bg-surface border border-border flex items-center justify-center text-muted hover:text-foreground hover:border-foreground/20 transition-all cursor-pointer"
     >
       {theme === "light" && (
         <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>

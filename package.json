@@ -13,16 +13,20 @@
     "db:studio": "prisma studio"
   },
   "dependencies": {
+    "@ai-sdk/openai": "^3.0.28",
     "@daily-co/daily-js": "^0.87.0",
     "@daily-co/daily-react": "^0.24.0",
     "@prisma/adapter-pg": "^7.4.0",
     "@prisma/client": "^7.4.0",
     "@prisma/extension-accelerate": "^2.0.2",
+    "ai": "^6.0.85",
     "dotenv": "^17.3.1",
+    "lucide-react": "^0.563.0",
     "next": "16.1.6",
     "pg": "^8.18.0",
     "react": "19.2.3",
-    "react-dom": "19.2.3"
+    "react-dom": "19.2.3",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

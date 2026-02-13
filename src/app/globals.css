@@ -7,40 +7,40 @@
   --surface: #ffffff;
   --surface-elevated: #f3f4f6;
   --border: #e2e5ea;
-  --accent: #4f46e5;
-  --accent-hover: #4338ca;
-  --accent-agent1: #2563eb;
+  --accent: #686EFF;
+  --accent-hover: #575de0;
+  --accent-agent1: #686EFF;
   --accent-agent2: #f59e0b;
-  --ring: rgba(79, 70, 229, 0.4);
+  --ring: rgba(104, 110, 255, 0.4);
   --danger: #ef4444;
   --danger-hover: #dc2626;
-  --gradient-start: #4f46e5;
-  --gradient-end: #7c3aed;
+  --gradient-start: #686EFF;
+  --gradient-end: #9b6dff;
   --shadow-color: rgba(0, 0, 0, 0.06);
-  --shadow-accent: rgba(79, 70, 229, 0.15);
+  --shadow-accent: rgba(104, 110, 255, 0.15);
   --success: #22c55e;
   --error-bg: rgba(239, 68, 68, 0.08);
   --error-border: rgba(239, 68, 68, 0.18);
 }
 
 .dark {
-  --background: #060911;
-  --foreground: #e6eaf0;
-  --muted: #7c8594;
-  --surface: #0d1320;
-  --surface-elevated: #141c2e;
-  --border: #1e293b;
-  --accent: #6366f1;
-  --accent-hover: #818cf8;
-  --accent-agent1: #60a5fa;
+  --background: #0B0B0B;
+  --foreground: #f0f0f5;
+  --muted: #8b8fa3;
+  --surface: #141416;
+  --surface-elevated: #1c1c20;
+  --border: #2a2a30;
+  --accent: #686EFF;
+  --accent-hover: #7b80ff;
+  --accent-agent1: #818aff;
   --accent-agent2: #fbbf24;
-  --ring: rgba(99, 102, 241, 0.45);
+  --ring: rgba(104, 110, 255, 0.45);
   --danger: #f87171;
   --danger-hover: #ef4444;
-  --gradient-start: #6366f1;
-  --gradient-end: #a78bfa;
-  --shadow-color: rgba(0, 0, 0, 0.3);
-  --shadow-accent: rgba(99, 102, 241, 0.2);
+  --gradient-start: #686EFF;
+  --gradient-end: #9b6dff;
+  --shadow-color: rgba(0, 0, 0, 0.4);
+  --shadow-accent: rgba(104, 110, 255, 0.25);
   --success: #4ade80;
   --error-bg: rgba(248, 113, 113, 0.1);
   --error-border: rgba(248, 113, 113, 0.2);
@@ -67,14 +67,34 @@
   --color-success: var(--success);
   --color-error-bg: var(--error-bg);
   --color-error-border: var(--error-border);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: var(--font-schibsted);
+  --font-display: var(--font-duran);
+  --font-mono: var(--font-schibsted);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans), "Schibsted Grotesk", Arial, Helvetica, sans-serif;
+  font-size: 16px;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-display), "Duran", sans-serif;
+}
+
+/* Pointer cursor on interactive elements */
+button:not(:disabled),
+[role="button"]:not(:disabled) {
+  cursor: pointer;
+}
+
+/* Links: underline only on hover */
+a {
+  text-decoration: none !important;
+}
+a:hover {
+  text-decoration: underline !important;
 }
 
 /* Theme-aware select styling */

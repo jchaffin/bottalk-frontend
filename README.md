@@ -53,7 +53,7 @@ src/
       scenarios/        GET — list scenarios from DB
       start/            POST — create room, start agents, persist session
       stop/             POST — stop agents, delete session
-      generate-prompts/ POST — OpenAI generates role prompts from a topic
+      generate/        POST — OpenAI generates role prompts from a topic
   components/
     CallProvider.tsx     Daily room audio + transcript via app-messages
     AgentAvatar.tsx      Speaker bubble with speaking indicator
