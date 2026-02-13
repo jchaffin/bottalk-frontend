@@ -1,40 +1,10 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import scenarioData from "../../../lib/scenarios.json";
 
 const PCC_API = "https://api.pipecat.daily.co/v1/public";
 const PCC_API_KEY = process.env.PIPECAT_CLOUD_API_KEY!;
 const AGENT_NAME = process.env.PCC_AGENT_NAME || "outrival-agent";
 const DAILY_API_KEY = process.env.DAILY_API_KEY!;
-const TOPIC = process.env.CONVERSATION_TOPIC || "enterprise software sales";
-
-// --- Agent configs (moved from sarah.py / mike.py) ---
-
-const SARAH_PROMPT = `You are Sarah, an enterprise software sales rep at TechFlow Solutions. \
-You are on a live phone call with a potential customer about ${TOPIC}.
-
-Your product — TechFlow — is an AI workflow automation platform that \
-integrates with Salesforce, HubSpot, Slack, Jira, and 50+ other tools. \
-Professional tier: $99/user/month. 30-day free trial. \
-Case study: Acme Corp cut manual work by 60% in 3 months.
-
-Rules:
-- 2-3 short spoken sentences per turn. No bullets, no markdown, no emoji.
-- Be warm, curious, empathetic. Ask questions. Handle objections gracefully.
-- Goal: understand pain, demo value, propose a free trial or a next call.`;
-
-const MIKE_PROMPT = `You are Mike, VP of Ops at BrightCart, a 200-person e-commerce company. \
-A sales rep just called you about ${TOPIC}.
-
-Your pain: manual order processing, poor tool integration, team drowning \
-in repetitive tasks. Budget ~$50k/yr. Last year you bought an expensive \
-platform that flopped, so you are cautious.
-
-Rules:
-- 2-3 short spoken sentences per turn. No bullets, no markdown, no emoji.
-- Be interested but skeptical. Push back on price. Ask for proof of ROI.
-- Do not agree too quickly. Ask pointed questions about timeline and support.`;
-
-const SARAH_VOICE = process.env.SARAH_VOICE_ID || "21m00Tcm4TlvDq8ikWAM";
-const MIKE_VOICE = process.env.MIKE_VOICE_ID || "TxGEqnHWrfWFTfGW9XjX";
 
 // --- Helpers ---
 
@@ -46,9 +16,7 @@ async function createDailyRoom(): Promise<{ url: string }> {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      properties: {
-        exp: Math.floor(Date.now() / 1000) + 600,
-      },
+      properties: { exp: Math.floor(Date.now() / 1000) + 600 },
     }),
   });
   if (!res.ok) throw new Error(`Daily room creation failed: ${res.status}`);
@@ -62,9 +30,7 @@ async function getDailyToken(roomName: string): Promise<string> {
       Authorization: `Bearer ${DAILY_API_KEY}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      properties: { room_name: roomName },
-    }),
+    body: JSON.stringify({ properties: { room_name: roomName } }),
   });
   if (!res.ok) throw new Error(`Daily token creation failed: ${res.status}`);
   const data = await res.json();
@@ -91,11 +57,43 @@ async function startPCCSession(
 
 // --- Route handler ---
 
-// Store active session IDs so /api/stop can terminate them.
 let activeSessions: string[] = [];
 
-export async function POST() {
+export async function POST(request: NextRequest) {
   try {
+    const body = await request.json().catch(() => ({}));
+
+    // Custom prompts (from LLM generate flow)
+    let sarahPrompt = body.sarah_prompt as string | undefined;
+    let mikePrompt = body.mike_prompt as string | undefined;
+    let sarahVoice = body.sarah_voice_id as string | undefined;
+    let mikeVoice = body.mike_voice_id as string | undefined;
+
+    // Fallback to scenario templates if no custom prompts
+    if (!sarahPrompt || !mikePrompt) {
+      const scenarioKey = body.scenario || scenarioData.default;
+      const topic = body.topic || "enterprise software sales";
+      const scenarios = scenarioData.scenarios as Record<string, any>;
+      const scenario = scenarios[scenarioKey];
+
+      if (!scenario) {
+        return NextResponse.json(
+          { detail: `Unknown scenario: ${scenarioKey}` },
+          { status: 400 },
+        );
+      }
+
+      const sarah = scenario.agents.find((a: any) => a.name === "Sarah");
+      const mike = scenario.agents.find((a: any) => a.name === "Mike");
+      sarahPrompt = sarah.prompt.replace(/\{\{topic\}\}/g, topic);
+      mikePrompt = mike.prompt.replace(/\{\{topic\}\}/g, topic);
+      sarahVoice = sarahVoice || sarah.voice_id;
+      mikeVoice = mikeVoice || mike.voice_id;
+    }
+
+    sarahVoice = sarahVoice || process.env.SARAH_VOICE_ID || "21m00Tcm4TlvDq8ikWAM";
+    mikeVoice = mikeVoice || process.env.MIKE_VOICE_ID || "TxGEqnHWrfWFTfGW9XjX";
+
     // 1. Create a Daily room
     const room = await createDailyRoom();
     const roomUrl = room.url;
@@ -108,22 +106,22 @@ export async function POST() {
       getDailyToken(roomName),
     ]);
 
-    // 3. Start both agents on Pipecat Cloud (in parallel)
+    // 3. Start both agents on Pipecat Cloud
     const [sarahSession, mikeSession] = await Promise.all([
       startPCCSession({
         room_url: roomUrl,
         token: sarahToken,
         name: "Sarah",
-        system_prompt: SARAH_PROMPT,
-        voice_id: SARAH_VOICE,
+        system_prompt: sarahPrompt,
+        voice_id: sarahVoice,
         goes_first: true,
       }),
       startPCCSession({
         room_url: roomUrl,
         token: mikeToken,
         name: "Mike",
-        system_prompt: MIKE_PROMPT,
-        voice_id: MIKE_VOICE,
+        system_prompt: mikePrompt,
+        voice_id: mikeVoice,
         goes_first: false,
       }),
     ]);

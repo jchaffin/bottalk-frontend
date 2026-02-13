@@ -1,3 +1,10 @@
+// Local dev: set NEXT_PUBLIC_API_URL=http://localhost:8000 to hit dev.py
+// Production (Vercel): leave unset, calls same-origin API routes
+const AGENT_API = process.env.NEXT_PUBLIC_API_URL || "";
+
+// Generate-prompts always runs on the Next.js server (not dev.py)
+const NEXT_API = "";
+
 export interface StartResponse {
   roomUrl: string;
   token: string;
@@ -7,17 +14,47 @@ export interface TranscriptLine {
   id: number;
   speaker: string;
   text: string;
-  /** true while Deepgram is still processing this utterance */
   interim?: boolean;
 }
 
-// Local dev: set NEXT_PUBLIC_API_URL=http://localhost:8000 to hit dev.py
-// Production (Vercel): leave unset, calls same-origin API routes
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
+export interface AgentPrompt {
+  role: string;
+  prompt: string;
+}
 
-/** Create a Daily room and spawn both agents. */
-export async function startConversation(): Promise<StartResponse> {
-  const res = await fetch(`${API_BASE}/api/start`, { method: "POST" });
+export interface GeneratedPrompts {
+  sarah: AgentPrompt;
+  mike: AgentPrompt;
+}
+
+export interface StartOptions {
+  scenario?: string;
+  topic?: string;
+  sarah_prompt?: string;
+  mike_prompt?: string;
+}
+
+/** Ask the LLM to generate role + prompt pairs for a given topic. */
+export async function generatePrompts(topic: string): Promise<GeneratedPrompts> {
+  const res = await fetch(`${NEXT_API}/api/generate-prompts`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ topic }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `API error ${res.status}`);
+  }
+  return res.json();
+}
+
+/** Create a Daily room and spawn agents. */
+export async function startConversation(options?: StartOptions): Promise<StartResponse> {
+  const res = await fetch(`${AGENT_API}/api/start`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(options || {}),
+  });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.detail || `API error ${res.status}`);
@@ -27,5 +64,5 @@ export async function startConversation(): Promise<StartResponse> {
 
 /** Terminate running agent sessions. */
 export async function stopConversation(): Promise<void> {
-  await fetch(`${API_BASE}/api/stop`, { method: "POST" });
+  await fetch(`${AGENT_API}/api/stop`, { method: "POST" });
 }

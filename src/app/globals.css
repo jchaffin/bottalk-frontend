@@ -1,13 +1,57 @@
 @import "tailwindcss";
 
 :root {
-  --background: #0f0f0f;
-  --foreground: #e0e0e0;
+  --background: #f8f9fa;
+  --foreground: #0d1117;
+  --muted: #6b7280;
+  --surface: #ffffff;
+  --surface-elevated: #f3f4f6;
+  --border: #e2e5ea;
+  --accent: #4f46e5;
+  --accent-hover: #4338ca;
+  --accent-sarah: #3b5bdb;
+  --accent-mike: #7048e8;
+  --ring: rgba(79, 70, 229, 0.4);
+  --danger: #ef4444;
+  --danger-hover: #dc2626;
+  --gradient-start: #4f46e5;
+  --gradient-end: #7c3aed;
+}
+
+.dark {
+  --background: #060911;
+  --foreground: #e6eaf0;
+  --muted: #7c8594;
+  --surface: #0d1320;
+  --surface-elevated: #141c2e;
+  --border: #1e293b;
+  --accent: #6366f1;
+  --accent-hover: #818cf8;
+  --accent-sarah: #5b7cf7;
+  --accent-mike: #9775fa;
+  --ring: rgba(99, 102, 241, 0.45);
+  --danger: #f87171;
+  --danger-hover: #ef4444;
+  --gradient-start: #6366f1;
+  --gradient-end: #a78bfa;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-surface: var(--surface);
+  --color-surface-elevated: var(--surface-elevated);
+  --color-border: var(--border);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-sarah: var(--accent-sarah);
+  --color-accent-mike: var(--accent-mike);
+  --color-ring: var(--ring);
+  --color-danger: var(--danger);
+  --color-danger-hover: var(--danger-hover);
+  --color-gradient-start: var(--gradient-start);
+  --color-gradient-end: var(--gradient-end);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }

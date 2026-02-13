@@ -217,12 +217,12 @@ export default function CallProvider({
   return (
     <div className="flex flex-col items-center gap-6 w-full">
       <div ref={containerRef} className="hidden" />
-      <div className="flex gap-12">
-        <AgentAvatar name="Sarah" initial="S" color="bg-[#2a4a7f]" speaking={sarahSpeaking} />
-        <AgentAvatar name="Mike" initial="M" color="bg-[#4a2a6f]" speaking={mikeSpeaking} />
+      <div className="flex gap-16">
+        <AgentAvatar name="Sarah" initial="S" color="bg-accent-sarah" speaking={sarahSpeaking} />
+        <AgentAvatar name="Mike" initial="M" color="bg-accent-mike" speaking={mikeSpeaking} />
       </div>
       <Transcript lines={lines} />
-      <p className="text-xs text-gray-500">{status}</p>
+      <p className="text-xs text-muted/60 font-mono">{status}</p>
     </div>
   );
 }
