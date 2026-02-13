@@ -6,7 +6,17 @@ const PCC_API_KEY = process.env.PIPECAT_CLOUD_API_KEY!;
 const AGENT_NAME = process.env.PCC_AGENT_NAME || "outrival-agent";
 const DAILY_API_KEY = process.env.DAILY_API_KEY!;
 
+const DEFAULT_VOICE_1 = process.env.DEFAULT_VOICE_1 || "21m00Tcm4TlvDq8ikWAM";
+const DEFAULT_VOICE_2 = process.env.DEFAULT_VOICE_2 || "TxGEqnHWrfWFTfGW9XjX";
+
 // --- Helpers ---
+
+interface AgentConfig {
+  name: string;
+  role?: string;
+  prompt: string;
+  voice_id?: string;
+}
 
 async function createDailyRoom(): Promise<{ url: string }> {
   const res = await fetch("https://api.daily.co/v1/rooms", {
@@ -63,14 +73,10 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json().catch(() => ({}));
 
-    // Custom prompts (from LLM generate flow)
-    let sarahPrompt = body.sarah_prompt as string | undefined;
-    let mikePrompt = body.mike_prompt as string | undefined;
-    let sarahVoice = body.sarah_voice_id as string | undefined;
-    let mikeVoice = body.mike_voice_id as string | undefined;
+    let agents: [AgentConfig, AgentConfig] | undefined = body.agents;
 
-    // Fallback to scenario templates if no custom prompts
-    if (!sarahPrompt || !mikePrompt) {
+    // Fallback to scenario templates if no agents array provided
+    if (!agents || agents.length < 2 || !agents[0]?.prompt || !agents[1]?.prompt) {
       const scenarioKey = body.scenario || scenarioData.default;
       const topic = body.topic || "enterprise software sales";
       const scenarios = scenarioData.scenarios as Record<string, any>;
@@ -83,16 +89,28 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      const sarah = scenario.agents.find((a: any) => a.name === "Sarah");
-      const mike = scenario.agents.find((a: any) => a.name === "Mike");
-      sarahPrompt = sarah.prompt.replace(/\{\{topic\}\}/g, topic);
-      mikePrompt = mike.prompt.replace(/\{\{topic\}\}/g, topic);
-      sarahVoice = sarahVoice || sarah.voice_id;
-      mikeVoice = mikeVoice || mike.voice_id;
+      const a1 = scenario.agents[0];
+      const a2 = scenario.agents[1];
+      agents = [
+        {
+          name: a1.name,
+          prompt: a1.prompt.replace(/\{\{topic\}\}/g, topic),
+          voice_id: a1.voice_id || DEFAULT_VOICE_1,
+        },
+        {
+          name: a2.name,
+          prompt: a2.prompt.replace(/\{\{topic\}\}/g, topic),
+          voice_id: a2.voice_id || DEFAULT_VOICE_2,
+        },
+      ];
     }
 
-    sarahVoice = sarahVoice || process.env.SARAH_VOICE_ID || "21m00Tcm4TlvDq8ikWAM";
-    mikeVoice = mikeVoice || process.env.MIKE_VOICE_ID || "TxGEqnHWrfWFTfGW9XjX";
+    const agent1 = agents[0];
+    const agent2 = agents[1];
+    agent1.voice_id = agent1.voice_id || DEFAULT_VOICE_1;
+    agent2.voice_id = agent2.voice_id || DEFAULT_VOICE_2;
+
+    const allNames = [agent1.name, agent2.name];
 
     // 1. Create a Daily room
     const room = await createDailyRoom();
@@ -100,33 +118,35 @@ export async function POST(request: NextRequest) {
     const roomName = roomUrl.split("/").pop()!;
 
     // 2. Generate tokens
-    const [sarahToken, mikeToken, browserToken] = await Promise.all([
+    const [token1, token2, browserToken] = await Promise.all([
       getDailyToken(roomName),
       getDailyToken(roomName),
       getDailyToken(roomName),
     ]);
 
-    // 3. Start both agents on Pipecat Cloud
-    const [sarahSession, mikeSession] = await Promise.all([
-      startPCCSession({
-        room_url: roomUrl,
-        token: sarahToken,
-        name: "Sarah",
-        system_prompt: sarahPrompt,
-        voice_id: sarahVoice,
-        goes_first: true,
-      }),
-      startPCCSession({
-        room_url: roomUrl,
-        token: mikeToken,
-        name: "Mike",
-        system_prompt: mikePrompt,
-        voice_id: mikeVoice,
-        goes_first: false,
-      }),
-    ]);
+    // 3. Start both agents on Pipecat Cloud.
+    //    Agent 1 goes first (starts transcription), agent 2 follows.
+    const session1 = await startPCCSession({
+      room_url: roomUrl,
+      token: token1,
+      name: agent1.name,
+      system_prompt: agent1.prompt,
+      voice_id: agent1.voice_id,
+      goes_first: true,
+      known_agents: allNames,
+    });
 
-    activeSessions = [sarahSession.sessionId, mikeSession.sessionId];
+    const session2 = await startPCCSession({
+      room_url: roomUrl,
+      token: token2,
+      name: agent2.name,
+      system_prompt: agent2.prompt,
+      voice_id: agent2.voice_id,
+      goes_first: false,
+      known_agents: allNames,
+    });
+
+    activeSessions = [session1.sessionId, session2.sessionId];
 
     return NextResponse.json({ roomUrl, token: browserToken });
   } catch (err) {

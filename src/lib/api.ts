@@ -18,20 +18,41 @@ export interface TranscriptLine {
 }
 
 export interface AgentPrompt {
+  name: string;
   role: string;
   prompt: string;
+  voice_id?: string;
 }
 
 export interface GeneratedPrompts {
-  sarah: AgentPrompt;
-  mike: AgentPrompt;
+  agent1: AgentPrompt;
+  agent2: AgentPrompt;
 }
 
 export interface StartOptions {
-  scenario?: string;
-  topic?: string;
-  sarah_prompt?: string;
-  mike_prompt?: string;
+  agents: [AgentPrompt, AgentPrompt];
+}
+
+/** Available voice presets. */
+export const VOICES = [
+  { id: "21m00Tcm4TlvDq8ikWAM", name: "Sarah",  label: "Sarah (Female)" },
+  { id: "TxGEqnHWrfWFTfGW9XjX", name: "Mike",   label: "Mike (Male)" },
+  { id: "EXAVITQu4vr4xnSDxMaL", name: "Bella",  label: "Bella (Female)" },
+  { id: "ErXwobaYiN019PkySvjV", name: "Antoni", label: "Antoni (Male)" },
+] as const;
+
+export const DEFAULT_VOICE_1 = VOICES[0].id;
+export const DEFAULT_VOICE_2 = VOICES[1].id;
+
+/** Find the best voice for an agent name. Case-insensitive match. */
+export function voiceForName(name: string): string | undefined {
+  const lower = name.toLowerCase();
+  return VOICES.find((v) => v.name.toLowerCase() === lower)?.id;
+}
+
+/** Find the voice preset name for a given voice ID. */
+export function nameForVoice(voiceId: string): string | undefined {
+  return VOICES.find((v) => v.id === voiceId)?.name;
 }
 
 /** Ask the LLM to generate role + prompt pairs for a given topic. */
@@ -49,11 +70,11 @@ export async function generatePrompts(topic: string): Promise<GeneratedPrompts> 
 }
 
 /** Create a Daily room and spawn agents. */
-export async function startConversation(options?: StartOptions): Promise<StartResponse> {
+export async function startConversation(options: StartOptions): Promise<StartResponse> {
   const res = await fetch(`${AGENT_API}/api/start`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(options || {}),
+    body: JSON.stringify(options),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));

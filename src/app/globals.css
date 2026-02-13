@@ -9,8 +9,8 @@
   --border: #e2e5ea;
   --accent: #4f46e5;
   --accent-hover: #4338ca;
-  --accent-sarah: #3b5bdb;
-  --accent-mike: #7048e8;
+  --accent-agent1: #3b5bdb;
+  --accent-agent2: #7048e8;
   --ring: rgba(79, 70, 229, 0.4);
   --danger: #ef4444;
   --danger-hover: #dc2626;
@@ -27,8 +27,8 @@
   --border: #1e293b;
   --accent: #6366f1;
   --accent-hover: #818cf8;
-  --accent-sarah: #5b7cf7;
-  --accent-mike: #9775fa;
+  --accent-agent1: #5b7cf7;
+  --accent-agent2: #9775fa;
   --ring: rgba(99, 102, 241, 0.45);
   --danger: #f87171;
   --danger-hover: #ef4444;
@@ -45,8 +45,8 @@
   --color-border: var(--border);
   --color-accent: var(--accent);
   --color-accent-hover: var(--accent-hover);
-  --color-accent-sarah: var(--accent-sarah);
-  --color-accent-mike: var(--accent-mike);
+  --color-accent-agent1: var(--accent-agent1);
+  --color-accent-agent2: var(--accent-agent2);
   --color-ring: var(--ring);
   --color-danger: var(--danger);
   --color-danger-hover: var(--danger-hover);

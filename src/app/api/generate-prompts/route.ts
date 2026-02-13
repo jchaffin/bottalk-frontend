@@ -2,23 +2,25 @@ import { NextRequest, NextResponse } from "next/server";
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY!;
 
-const META_PROMPT = `You are a conversation designer. Given a topic, generate system prompts for two AI voice agents named Sarah and Mike who will have a live phone conversation.
+const META_PROMPT = `You are a conversation designer. Given a topic, generate system prompts for two AI voice agents who will have a live phone conversation.
 
-Assign complementary roles (e.g. sales rep / customer, interviewer / candidate, agent / caller, consultant / client). Sarah always initiates the conversation.
+Choose fitting names for each agent based on the topic. Assign complementary roles (e.g. sales rep / customer, interviewer / candidate, agent / caller, consultant / client). Agent 1 always initiates the conversation.
 
 Return ONLY valid JSON with this exact structure:
 {
-  "sarah": {
+  "agent1": {
+    "name": "chosen first name",
     "role": "short role title",
     "prompt": "full system prompt"
   },
-  "mike": {
+  "agent2": {
+    "name": "chosen first name",
     "role": "short role title",
     "prompt": "full system prompt"
   }
 }
 
-Each prompt MUST end with these rules:
+Each prompt MUST include the agent's name (e.g. "You are <name>, ...") and end with these rules:
 Rules:
 - 2-3 short spoken sentences per turn. No bullets, no markdown, no emoji.
 - Stay in character. Be natural and conversational.
@@ -76,8 +78,8 @@ export async function POST(request: NextRequest) {
 
     // Validate structure
     if (
-      !parsed.sarah?.role || !parsed.sarah?.prompt ||
-      !parsed.mike?.role || !parsed.mike?.prompt
+      !parsed.agent1?.name || !parsed.agent1?.role || !parsed.agent1?.prompt ||
+      !parsed.agent2?.name || !parsed.agent2?.role || !parsed.agent2?.prompt
     ) {
       throw new Error("Invalid prompt structure from LLM");
     }

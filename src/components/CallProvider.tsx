@@ -5,26 +5,32 @@ import AgentAvatar from "./AgentAvatar";
 import Transcript from "./Transcript";
 import type { TranscriptLine } from "../lib/api";
 
+const AGENT_COLORS = ["bg-accent-agent1", "bg-accent-agent2"] as const;
+
 interface CallProviderProps {
   roomUrl: string;
   token: string;
+  agentNames: [string, string];
   onLeave?: () => void;
 }
 
 export default function CallProvider({
   roomUrl,
   token,
+  agentNames,
   onLeave,
 }: CallProviderProps) {
   const [status, setStatus] = useState("Connecting...");
   const [lines, setLines] = useState<TranscriptLine[]>([]);
-  const [sarahSpeaking, setSarahSpeaking] = useState(false);
-  const [mikeSpeaking, setMikeSpeaking] = useState(false);
+  const [speakingMap, setSpeakingMap] = useState<Record<string, boolean>>({});
 
   const containerRef = useRef<HTMLDivElement>(null);
   const destroyedRef = useRef(false);
   const participantsRef = useRef<Record<string, string>>({});
 
+  // Build a set of agent names for quick lookup
+  const agentNameSet = useRef(new Set(agentNames));
+  agentNameSet.current = new Set(agentNames);
 
   // ---- Daily call for audio only ----
   useEffect(() => {
@@ -47,9 +53,6 @@ export default function CallProvider({
 
       function ensureAudio(sid: string, track: MediaStreamTrack) {
         if (audioEls[sid]) {
-          // Only replace the MediaStream when the track actually changes.
-          // participant-updated fires 30-60×/sec; creating a new
-          // MediaStream every time hammers the main thread and starves rAF.
           const current = (audioEls[sid].srcObject as MediaStream | null)
             ?.getAudioTracks()[0];
           if (current === track) return;
@@ -83,11 +86,8 @@ export default function CallProvider({
           participantsRef.current[ev.participant.session_id] = ev.participant.user_name;
       });
 
-      // Track speaking state in a ref so participant-updated (which fires
-      // dozens of times/sec) only triggers a React re-render when the value
-      // actually changes. Without this, every event re-renders CallProvider
-      // which cascades into Transcript and kills performance.
-      const speakingState = { Sarah: false, Mike: false };
+      // Track speaking state — only re-render when a value actually changes.
+      const speakingState: Record<string, boolean> = {};
 
       call.on("participant-updated", (ev) => {
         if (!ev) return;
@@ -96,13 +96,11 @@ export default function CallProvider({
         const audioTrack = p.tracks?.audio;
         if (audioTrack?.persistentTrack) ensureAudio(p.session_id, audioTrack.persistentTrack);
         const name = participantsRef.current[p.session_id];
+        if (!name || !agentNameSet.current.has(name)) return;
         const speaking = audioTrack?.state === "playable";
-        if (name === "Sarah" && speakingState.Sarah !== speaking) {
-          speakingState.Sarah = speaking;
-          setSarahSpeaking(speaking);
-        } else if (name === "Mike" && speakingState.Mike !== speaking) {
-          speakingState.Mike = speaking;
-          setMikeSpeaking(speaking);
+        if (speakingState[name] !== speaking) {
+          speakingState[name] = speaking;
+          setSpeakingMap((prev) => ({ ...prev, [name]: speaking }));
         }
       });
 
@@ -112,16 +110,9 @@ export default function CallProvider({
         delete participantsRef.current[ev.participant.session_id];
       });
 
-      // bot-llm-text: LLM tokens as they stream — fast, instant text.
-      // bot-llm-stopped: fires once per full LLM response — proper turn boundary.
-      // Tokens are buffered in a plain array and flushed to React via rAF
-      // so we never re-render more than once per frame.
-      //
-      // To avoid O(n) work that grows with conversation length, we only pass
-      // the last MAX_VISIBLE lines to React. The full history stays in
-      // linesSnapshot for bookkeeping; React never sees the full array.
+      // bot-llm-text / bot-llm-stopped transcript handling
       const MAX_VISIBLE = 200;
-      const activeLine: Record<string, number> = {}; // fromId -> index in lines
+      const activeLine: Record<string, number> = {};
       let linesSnapshot: TranscriptLine[] = [];
       let nextLineId = 0;
       let flushQueued = false;
@@ -131,8 +122,6 @@ export default function CallProvider({
         flushQueued = true;
         requestAnimationFrame(() => {
           flushQueued = false;
-          // slice() always returns a new array reference (so React
-          // detects the change) and caps at MAX_VISIBLE entries.
           setLines(linesSnapshot.slice(-MAX_VISIBLE));
         });
       }
@@ -143,9 +132,6 @@ export default function CallProvider({
         const fromId = ev.fromId;
         const speaker = participantsRef.current[fromId] || "Unknown";
 
-        // bot-llm-started fires when a new LLM generation begins.
-        // Clear any stale activeLine so the next bot-llm-text creates
-        // a fresh line instead of appending to a previous turn.
         if (msg.type === "bot-llm-started") {
           delete activeLine[fromId];
         }
@@ -154,19 +140,13 @@ export default function CallProvider({
           const text = msg.data.text;
           const idx = activeLine[fromId];
 
-          // If we have an active line for this speaker, append to it
           if (idx !== undefined && idx < linesSnapshot.length && linesSnapshot[idx].speaker === speaker) {
             linesSnapshot[idx] = { ...linesSnapshot[idx], text: linesSnapshot[idx].text + text };
-          }
-          // No active line, but last line is the same speaker —
-          // bot-llm-stopped can fire between LLM chunks within the same turn.
-          else if (linesSnapshot.length > 0 && linesSnapshot[linesSnapshot.length - 1].speaker === speaker) {
+          } else if (linesSnapshot.length > 0 && linesSnapshot[linesSnapshot.length - 1].speaker === speaker) {
             const last = linesSnapshot.length - 1;
             activeLine[fromId] = last;
             linesSnapshot[last] = { ...linesSnapshot[last], text: linesSnapshot[last].text + text };
-          }
-          // New speaker turn — start a new line
-          else {
+          } else {
             const id = nextLineId++;
             activeLine[fromId] = linesSnapshot.length;
             linesSnapshot.push({ id, speaker, text });
@@ -218,10 +198,17 @@ export default function CallProvider({
     <div className="flex flex-col items-center gap-6 w-full">
       <div ref={containerRef} className="hidden" />
       <div className="flex gap-16">
-        <AgentAvatar name="Sarah" initial="S" color="bg-accent-sarah" speaking={sarahSpeaking} />
-        <AgentAvatar name="Mike" initial="M" color="bg-accent-mike" speaking={mikeSpeaking} />
+        {agentNames.map((name, idx) => (
+          <AgentAvatar
+            key={name}
+            name={name}
+            initial={name[0]?.toUpperCase() || String(idx + 1)}
+            color={AGENT_COLORS[idx] || AGENT_COLORS[0]}
+            speaking={!!speakingMap[name]}
+          />
+        ))}
       </div>
-      <Transcript lines={lines} />
+      <Transcript lines={lines} agentNames={agentNames} />
       <p className="text-xs text-muted/60 font-mono">{status}</p>
     </div>
   );
