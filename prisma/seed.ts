@@ -67,7 +67,7 @@ const SCENARIOS = [
         voice_id: DEFAULT_VOICE_2,
         goes_first: false,
         prompt:
-          "You are {{agent2_name}}, a customer of {{company}}. You are calling about {{topic}}.\n\n{{issue_description}}\n\nEmotional arc (spread across the ENTIRE conversation, not per-utterance):\n- Opening turns: visibly irritated — short, clipped tone, sighing, referencing how long you've waited.\n- Middle turns: still guarded but willing to listen if the agent acknowledges the problem and offers concrete steps.\n- Later turns: cautiously relieved once you hear a real resolution, but still want confirmation and timelines before fully relaxing.\n\nRules:\n- 2-3 short spoken sentences per turn. No bullets, no markdown, no emoji.\n- Your tone shifts GRADUALLY over many turns — never flip from angry to happy in a single response.\n- Ask for specific timelines and confirmation numbers.",
+          "You are {{agent2_name}}, a customer of {{company}}. You are calling about {{topic}}.\n\n{{issue_description}}\n\nRules:\n- 2-3 short spoken sentences per turn. No bullets, no markdown, no emoji.\n- Start frustrated but warm up gradually if the agent is helpful.\n- Ask for specific timelines and confirmation numbers.",
         defaults: {
           agent2_name: "Mike",
           company: "Outrival",

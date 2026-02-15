@@ -27,15 +27,12 @@ For each agent, also return a "defaults" object mapping every variable name to i
 Example prompt fragment: "You are {{agent_name}}, a {{role}} at {{company}}. Your product — {{product}} — costs {{price}}."
 Example defaults: { "agent_name": "Sarah", "role": "sales rep", "company": "TechFlow", "product": "TechFlow AI", "price": "$99/mo" }
 
-EMOTIONAL ARC: If an agent has an emotional journey (e.g. frustrated→relieved, skeptical→convinced), describe it as a GRADUAL arc across the ENTIRE conversation — opening turns, middle turns, later turns. The agent should NEVER flip emotions in a single response. This is critical for realism.
-
 Each prompt MUST end with these rules:
 Rules:
 - 2-3 short spoken sentences per turn. No bullets, no markdown, no emoji.
 - Stay in character. Be natural and conversational.
-- Your tone shifts GRADUALLY over many turns — never abruptly change emotion in a single response.
 
-Make the prompts specific to the topic. Give each agent a clear personality, goals, and relevant background knowledge. Keep each prompt under 250 words.`;
+Make the prompts specific to the topic. Give each agent a clear personality, goals, and relevant background knowledge. Keep each prompt under 200 words.`;
 
 export async function POST(request: NextRequest) {
   try {
