@@ -25,6 +25,7 @@ export interface AgentPrompt {
   role: string;
   prompt: string;
   voice_id?: string;
+  defaults?: Record<string, string>;
 }
 
 export interface GeneratedPrompts {

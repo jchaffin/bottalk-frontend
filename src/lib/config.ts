@@ -24,3 +24,31 @@ export const PCC_AGENT_NAME = "outrival-agent";
 
 /** Label for app-messages (agent transcript events). Must match agents. */
 export const APP_MESSAGE_LABEL = "outrival";
+
+// ---------------------------------------------------------------------------
+// Prompt template variables
+// ---------------------------------------------------------------------------
+
+/** Parse all {{varName}} tokens from a string. Returns unique names in order of first appearance. */
+export function extractVariables(text: string): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const m of text.matchAll(/\{\{(\w+)\}\}/g)) {
+    if (!seen.has(m[1])) {
+      seen.add(m[1]);
+      result.push(m[1]);
+    }
+  }
+  return result;
+}
+
+/** Replace all {{varName}} placeholders in text with values from the map. Unreplaced variables are left as-is. */
+export function replaceVariables(
+  text: string,
+  vars: Record<string, string>,
+): string {
+  return text.replace(
+    /\{\{(\w+)\}\}/g,
+    (match, key) => vars[key] ?? match,
+  );
+}

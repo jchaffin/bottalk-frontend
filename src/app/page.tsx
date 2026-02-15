@@ -15,14 +15,23 @@ import {
   type GeneratedPrompts,
   type Scenario,
 } from "@/lib/api";
-import { AGENT_COLORS, TOPIC_MIN_LENGTH, TOPIC_MAX_LENGTH } from "@/lib/config";
+import { AGENT_COLORS, TOPIC_MIN_LENGTH, TOPIC_MAX_LENGTH, extractVariables, replaceVariables } from "@/lib/config";
 import CallProvider from "@/components/CallProvider";
 
 import ScenarioIcon from "@/components/ScenarioIcons";
 
 type Phase = "idle" | "generating" | "preview" | "starting" | "active";
 
-/** Convert a DB scenario into editable prompts. */
+/** Collect default variable values from both agents in a scenario. */
+function collectDefaults(scenario: Scenario): Record<string, string> {
+  const defaults: Record<string, string> = { topic: scenario.title };
+  for (const agent of scenario.agents) {
+    if (agent.defaults) Object.assign(defaults, agent.defaults);
+  }
+  return defaults;
+}
+
+/** Convert a DB scenario into editable prompts (keeps {{variables}} intact). */
 function scenarioToPrompts(scenario: Scenario): GeneratedPrompts {
   const a1 = scenario.agents[0];
   const a2 = scenario.agents[1];
@@ -30,14 +39,16 @@ function scenarioToPrompts(scenario: Scenario): GeneratedPrompts {
     agent1: {
       name: a1.name,
       role: a1.role,
-      prompt: a1.prompt.replace(/\{\{topic\}\}/g, scenario.title),
+      prompt: a1.prompt,
       voice_id: a1.voice_id || voiceForName(a1.name) || DEFAULT_VOICE_1,
+      defaults: a1.defaults,
     },
     agent2: {
       name: a2.name,
       role: a2.role,
-      prompt: a2.prompt.replace(/\{\{topic\}\}/g, scenario.title),
+      prompt: a2.prompt,
       voice_id: a2.voice_id || voiceForName(a2.name) || DEFAULT_VOICE_2,
+      defaults: a2.defaults,
     },
   };
 }
@@ -49,6 +60,7 @@ export default function Home() {
   const [showCustom, setShowCustom] = useState(false);
   const [prompts, setPrompts] = useState<GeneratedPrompts | null>(null);
   const [scenarioLabel, setScenarioLabel] = useState<string | null>(null);
+  const [variables, setVariables] = useState<Record<string, string>>({});
   const [roomUrl, setRoomUrl] = useState<string | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -71,6 +83,7 @@ export default function Home() {
     setError(null);
     setScenarioLabel(scenario.title);
     setPrompts(scenarioToPrompts(scenario));
+    setVariables(collectDefaults(scenario));
     setPhase("preview");
   }
 
@@ -86,6 +99,11 @@ export default function Home() {
       // Match voice to name if possible, otherwise use defaults
       result.agent1.voice_id = voiceForName(result.agent1.name) || DEFAULT_VOICE_1;
       result.agent2.voice_id = voiceForName(result.agent2.name) || DEFAULT_VOICE_2;
+      // Collect variable defaults from the generated prompts
+      const defaults: Record<string, string> = { topic: customTopic.trim() };
+      if (result.agent1.defaults) Object.assign(defaults, result.agent1.defaults);
+      if (result.agent2.defaults) Object.assign(defaults, result.agent2.defaults);
+      setVariables(defaults);
       setScenarioLabel(customTopic.trim());
       setPrompts(result);
       setPhase("preview");
@@ -100,18 +118,21 @@ export default function Home() {
     setError(null);
     setPhase("starting");
     try {
+      // Replace {{variables}} in prompts before sending to agents
+      const resolvedPrompt1 = replaceVariables(prompts.agent1.prompt, variables);
+      const resolvedPrompt2 = replaceVariables(prompts.agent2.prompt, variables);
       const { roomUrl, token } = await startConversation({
         agents: [
           {
             name: prompts.agent1.name,
             role: prompts.agent1.role,
-            prompt: prompts.agent1.prompt,
+            prompt: resolvedPrompt1,
             voice_id: prompts.agent1.voice_id || DEFAULT_VOICE_1,
           },
           {
             name: prompts.agent2.name,
             role: prompts.agent2.role,
-            prompt: prompts.agent2.prompt,
+            prompt: resolvedPrompt2,
             voice_id: prompts.agent2.voice_id || DEFAULT_VOICE_2,
           },
         ],
@@ -133,6 +154,7 @@ export default function Home() {
       setPhase("idle");
       setPrompts(null);
       setScenarioLabel(null);
+      setVariables({});
       setShowCustom(false);
       setCustomTopic("");
     }
@@ -141,6 +163,7 @@ export default function Home() {
   function handleBack() {
     setPrompts(null);
     setScenarioLabel(null);
+    setVariables({});
     setPhase("idle");
   }
 
@@ -177,6 +200,14 @@ export default function Home() {
   const agentNames: [string, string] = prompts
     ? [prompts.agent1.name, prompts.agent2.name]
     : ["Agent 1", "Agent 2"];
+
+  // Detect all {{variables}} across both prompts (deduplicated, in order)
+  const detectedVars = prompts
+    ? [...new Set([
+        ...extractVariables(prompts.agent1.prompt),
+        ...extractVariables(prompts.agent2.prompt),
+      ])]
+    : [];
 
   return (
     <main className="flex flex-col items-center justify-center min-h-screen px-6 py-16 gap-10">
@@ -349,6 +380,42 @@ export default function Home() {
             ))}
           </div>
 
+          {/* === Variables panel === */}
+          {detectedVars.length > 0 && (
+            <div className="rounded-2xl bg-surface border border-border p-5 space-y-3">
+              <div className="flex items-center gap-2 mb-1">
+                <svg className="w-4 h-4 text-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M12 2L2 7l10 5 10-5-10-5z" />
+                  <path d="M2 17l10 5 10-5" />
+                  <path d="M2 12l10 5 10-5" />
+                </svg>
+                <span className="text-sm font-semibold text-foreground">Variables</span>
+                <span className="text-xs text-muted/50">Edit values used in the prompts above</span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {detectedVars.map((varName) => (
+                  <div key={varName} className="flex items-center gap-2">
+                    <label
+                      className="text-xs text-muted font-mono whitespace-nowrap min-w-[100px]"
+                      title={varName}
+                    >
+                      {varName}
+                    </label>
+                    <input
+                      value={variables[varName] ?? ""}
+                      onChange={(e) =>
+                        setVariables((prev) => ({ ...prev, [varName]: e.target.value }))
+                      }
+                      disabled={phase === "starting"}
+                      placeholder={varName}
+                      className="flex-1 rounded-lg bg-surface-elevated border border-border px-2.5 py-1.5 text-xs text-foreground/80 focus:outline-none focus:ring-2 focus:ring-accent/30 disabled:opacity-50 transition-all"
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="flex items-center justify-between">
             <button
               onClick={handleBack}
@@ -413,6 +480,7 @@ export default function Home() {
                   setPhase("idle");
                   setPrompts(null);
                   setScenarioLabel(null);
+                  setVariables({});
                   setShowCustom(false);
                   setCustomTopic("");
                 }}
