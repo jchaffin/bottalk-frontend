@@ -9,4 +9,7 @@ export default defineConfig({
     // Direct TCP connection for CLI operations (migrate, push, seed)
     url: env("POSTGRES_URL"),
   },
+  migrations: {
+    seed: "npx tsx prisma/seed.ts",
+  },
 });

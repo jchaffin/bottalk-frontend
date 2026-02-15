@@ -101,6 +101,42 @@ export async function fetchScenarios(): Promise<Scenario[]> {
   return res.json();
 }
 
+/** Per-agent variable maps. */
+export interface AgentVariables {
+  agent1: Record<string, string>;
+  agent2: Record<string, string>;
+}
+
+/** Collect default variable values per agent from a scenario. Shared keys (like topic) are copied to both. */
+export function collectDefaults(scenario: Scenario): AgentVariables {
+  const shared: Record<string, string> = { topic: scenario.title };
+  const a1Defaults = { ...shared, ...(scenario.agents[0]?.defaults ?? {}) };
+  const a2Defaults = { ...shared, ...(scenario.agents[1]?.defaults ?? {}) };
+  return { agent1: a1Defaults, agent2: a2Defaults };
+}
+
+/** Convert a DB scenario into editable prompts (keeps {{variables}} intact). */
+export function scenarioToPrompts(scenario: Scenario): GeneratedPrompts {
+  const a1 = scenario.agents[0];
+  const a2 = scenario.agents[1];
+  return {
+    agent1: {
+      name: a1.name,
+      role: a1.role,
+      prompt: a1.prompt,
+      voice_id: a1.voice_id || voiceForName(a1.name) || DEFAULT_VOICE_1,
+      defaults: a1.defaults,
+    },
+    agent2: {
+      name: a2.name,
+      role: a2.role,
+      prompt: a2.prompt,
+      voice_id: a2.voice_id || voiceForName(a2.name) || DEFAULT_VOICE_2,
+      defaults: a2.defaults,
+    },
+  };
+}
+
 export interface SavedConversation {
   id: string;
   title: string;

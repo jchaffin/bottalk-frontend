@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { fetchConversations } from "@/lib/api";
 
-export default function SavedPage() {
+export default function TranscriptsPage() {
   const [conversations, setConversations] = useState<Awaited<ReturnType<typeof fetchConversations>>>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -21,7 +21,7 @@ export default function SavedPage() {
       <div className="w-full max-w-2xl space-y-6">
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-bold tracking-tight text-foreground">
-            Saved Conversations
+            Transcripts
           </h1>
           <Link
             href="/"
@@ -42,7 +42,7 @@ export default function SavedPage() {
         )}
 
         {!loading && !error && conversations.length === 0 && (
-          <p className="text-muted text-sm">No saved conversations yet. Start a conversation and leave the room to save it.</p>
+          <p className="text-muted text-sm">No transcripts yet. Start a conversation and leave the room to save it.</p>
         )}
 
         {!loading && !error && conversations.length > 0 && (
@@ -50,7 +50,7 @@ export default function SavedPage() {
             {conversations.map((c) => (
               <li key={c.id}>
                 <Link
-                  href={`/saved/${c.id}`}
+                  href={`/transcripts/${c.id}`}
                   className="block rounded-xl bg-surface border border-border p-4 hover:border-accent/40 transition-colors"
                 >
                   <p className="font-medium text-foreground">{c.title}</p>

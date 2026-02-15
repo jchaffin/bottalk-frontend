@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useEffect, useRef } from "react";
-import { type TranscriptLine } from "../lib/api";
+import { type TranscriptLine } from "@/lib/api";
 
 const AGENT_COLOR_CLASSES = ["text-accent-agent1", "text-accent-agent2"];
 

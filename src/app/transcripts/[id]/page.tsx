@@ -7,7 +7,7 @@ import { fetchConversation } from "@/lib/api";
 
 const AGENT_COLOR_CLASSES = ["text-accent-agent1", "text-accent-agent2"];
 
-export default function SavedConversationPage() {
+export default function TranscriptPage() {
   const params = useParams();
   const id = params.id as string;
   const [conversation, setConversation] = useState<Awaited<ReturnType<typeof fetchConversation>> | null>(null);
@@ -36,8 +36,8 @@ export default function SavedConversationPage() {
         <div className="px-4 py-2.5 rounded-xl bg-error-bg border border-error-border">
           <p className="text-danger text-sm">{error ?? "Not found"}</p>
         </div>
-        <Link href="/saved" className="mt-4 text-sm text-muted hover:text-foreground">
-          ← Back to saved
+        <Link href="/transcripts" className="mt-4 text-sm text-muted hover:text-foreground">
+          ← Back to transcripts
         </Link>
       </main>
     );
@@ -57,10 +57,10 @@ export default function SavedConversationPage() {
             {conversation.title}
           </h1>
           <Link
-            href="/saved"
+            href="/transcripts"
             className="text-sm font-medium text-muted hover:text-foreground transition-colors"
           >
-            ← Saved list
+            ← All transcripts
           </Link>
         </div>
 

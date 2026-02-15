@@ -21,6 +21,7 @@
   --success: #22c55e;
   --error-bg: rgba(239, 68, 68, 0.08);
   --error-border: rgba(239, 68, 68, 0.18);
+  --avatar-text: #ffffff;
 }
 
 .dark {
@@ -44,6 +45,7 @@
   --success: #4ade80;
   --error-bg: rgba(248, 113, 113, 0.1);
   --error-border: rgba(248, 113, 113, 0.2);
+  --avatar-text: #ffffff;
 }
 
 @theme inline {
@@ -67,6 +69,7 @@
   --color-success: var(--success);
   --color-error-bg: var(--error-bg);
   --color-error-border: var(--error-border);
+  --color-avatar-text: var(--avatar-text);
   --font-sans: var(--font-schibsted);
   --font-display: var(--font-duran);
   --font-mono: var(--font-schibsted);
@@ -100,4 +103,112 @@ a:hover {
 /* Theme-aware select styling */
 select {
   color-scheme: light dark;
+}
+
+/* ---------------------------------------------------------------------------
+   Reusable component classes
+   --------------------------------------------------------------------------- */
+
+/* Surface card with rounded corners and themed border */
+.card {
+  border-radius: 1rem;        /* rounded-2xl */
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+/* Primary action button (filled, foreground-on-background) */
+.btn-primary {
+  padding: 0.625rem 1.5rem;   /* py-2.5 px-6 */
+  border-radius: 0.75rem;     /* rounded-xl */
+  background: var(--foreground);
+  color: var(--background);
+  font-size: 0.875rem;
+  font-weight: 600;
+  transition: all 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.btn-primary:hover:not(:disabled) {
+  opacity: 0.9;
+}
+.btn-primary:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+/* Secondary / ghost button (bordered) */
+.btn-secondary {
+  padding: 0.625rem 1.25rem;  /* py-2.5 px-5 */
+  border-radius: 0.75rem;
+  border: 1px solid var(--border);
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--muted);
+  transition: all 0.15s ease;
+}
+.btn-secondary:hover:not(:disabled) {
+  color: var(--foreground);
+  background: var(--surface-elevated);
+}
+.btn-secondary:disabled {
+  opacity: 0.5;
+}
+
+/* Danger / destructive button */
+.btn-danger {
+  padding: 0.625rem 1.5rem;
+  border-radius: 0.75rem;
+  background: var(--danger);
+  color: var(--background);
+  font-size: 0.875rem;
+  font-weight: 600;
+  transition: all 0.15s ease;
+}
+.btn-danger:hover:not(:disabled) {
+  background: var(--danger-hover);
+}
+.btn-danger:disabled {
+  opacity: 0.5;
+}
+
+/* Inline / transparent text input (no border, no background) */
+.input-inline {
+  width: 100%;
+  background: transparent;
+  border: none;
+  outline: none;
+  padding: 0;
+}
+.input-inline:disabled {
+  opacity: 0.5;
+}
+
+/* Bordered input / select — elevated surface with themed border */
+.input-bordered {
+  width: 100%;
+  border-radius: 0.5rem;     /* rounded-lg */
+  background: var(--surface-elevated);
+  border: 1px solid var(--border);
+  padding: 0.5rem 0.75rem;   /* py-2 px-3 */
+  font-size: 0.75rem;        /* text-xs */
+  color: color-mix(in srgb, var(--foreground) 80%, transparent);
+  outline: none;
+  transition: all 0.15s ease;
+}
+.input-bordered:focus {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.input-bordered:disabled {
+  opacity: 0.5;
+}
+
+/* Avatar initial badge — colored background with theme-aware text */
+.avatar-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  color: var(--avatar-text);
+  border-radius: 0.75rem;     /* rounded-xl */
 }

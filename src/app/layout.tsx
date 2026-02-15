@@ -4,7 +4,7 @@ import localFont from "next/font/local";
 import { Schibsted_Grotesk } from "next/font/google";
 import "./globals.css";
 import ThemeToggle from "@/components/ThemeToggle";
-import HistoryIcon from "@/components/HistoryIcon";
+import { History } from "lucide-react";
 
 const duran = localFont({
   src: [
@@ -54,12 +54,12 @@ export default function RootLayout({
       >
         <div className="fixed top-4 right-4 z-50 flex items-center gap-2">
           <Link
-            href="/saved"
+            href="/transcripts"
             aria-label="Conversation history"
             title="Conversation history"
             className="w-9 h-9 rounded-xl bg-surface border border-border flex items-center justify-center text-muted hover:text-foreground hover:border-foreground/20 transition-all"
           >
-            <HistoryIcon />
+            <History className="w-4 h-4" />
           </Link>
           <ThemeToggle />
         </div>

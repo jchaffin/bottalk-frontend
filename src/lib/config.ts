@@ -17,6 +17,9 @@ export const TOPIC_MAX_LENGTH = 500;
 
 export const AGENT_COLORS = ["bg-accent-agent1", "bg-accent-agent2"] as const;
 
+/** Default agent avatar colors as hex values (matches --accent-agent1 / --accent-agent2). */
+export const DEFAULT_AGENT_COLORS: [string, string] = ["#686EFF", "#f59e0b"];
+
 export const DEFAULT_SCENARIO_SLUG = "sales";
 export const DEFAULT_TOPIC = "enterprise software sales";
 
