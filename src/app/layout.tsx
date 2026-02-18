@@ -43,6 +43,10 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const pccConsoleUrl =
+    process.env.NEXT_PUBLIC_PCC_CONSOLE_URL ||
+    "https://pipecat.daily.co/solid-earwig-harlequin-473/agents";
+
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
@@ -95,7 +99,7 @@ export default function RootLayout({
             </div>
             <div className="flex items-center gap-2">
               <a
-                href="https://console.pipecat.daily.co"
+                href={pccConsoleUrl}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="hidden sm:flex items-center gap-1.5 text-[10px] text-muted bg-surface-elevated px-2.5 py-1 rounded-lg border border-border hover:bg-border/50 transition-colors cursor-pointer"
