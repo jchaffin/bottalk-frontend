@@ -6,7 +6,7 @@ import { DEFAULT_VOICE_1, DEFAULT_VOICE_2, DEFAULT_SCENARIO_SLUG, DEFAULT_TOPIC,
 const PCC_API = "https://api.pipecat.daily.co/v1/public";
 const PCC_API_KEY =
   process.env.PIPECAT_CLOUD_PUBLIC_API_KEY || process.env.PIPECAT_CLOUD_API_KEY;
-const PCC_PRIVATE_API_KEY = process.env.PIPECAT_CLOUD_PRIVATE_API_KEY;
+const PCC_PRIVATE_API_KEY = process.env.PCC_PRIVATE_KEY;
 const DAILY_API_KEY = process.env.DAILY_API_KEY!;
 
 
