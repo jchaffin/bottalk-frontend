@@ -19,16 +19,21 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "sessions param required" }, { status: 400 });
   }
 
+  const errors: string[] = [];
   const results = await Promise.allSettled(
     sessionIds.map(async (sid) => {
-      const res = await fetch(
-        `${PCC_API}/${PCC_AGENT_NAME}/sessions/${sid}/metrics`,
-        {
-          headers: { Authorization: `Bearer ${PCC_API_KEY}` },
-          next: { revalidate: 0 },
-        },
-      );
-      if (!res.ok) return null;
+      const url = `${PCC_API}/${PCC_AGENT_NAME}/sessions/${sid}/metrics`;
+      const res = await fetch(url, {
+        headers: { Authorization: `Bearer ${PCC_API_KEY}` },
+        next: { revalidate: 0 },
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        const msg = `PCC ${res.status} for ${sid}: ${body.slice(0, 200)}`;
+        console.error("[pcc-metrics]", msg);
+        errors.push(msg);
+        return null;
+      }
       return res.json();
     }),
   );
@@ -37,5 +42,5 @@ export async function GET(request: NextRequest) {
     .filter((r): r is PromiseFulfilledResult<any> => r.status === "fulfilled" && r.value != null)
     .map((r) => r.value);
 
-  return NextResponse.json({ sessions: metrics });
+  return NextResponse.json({ sessions: metrics, errors: errors.length > 0 ? errors : undefined });
 }

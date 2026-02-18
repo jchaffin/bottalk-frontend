@@ -634,6 +634,7 @@ export default function CallProvider({
             if (!res.ok) { console.warn("[CallProvider] PCC poll failed:", res.status); return; }
             const data = await res.json();
             const sessions: any[] = data.sessions || [];
+            if (data.errors) console.warn("[CallProvider] PCC proxy errors:", data.errors);
             console.debug("[CallProvider] PCC sessions:", sessions.length, "timeseries items:", sessions.reduce((n: number, s: any) => n + (s.timeseries?.length || 0), 0));
 
             const merged: TurnMetric[] = [];
