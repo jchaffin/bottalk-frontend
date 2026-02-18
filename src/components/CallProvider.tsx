@@ -2,10 +2,42 @@
 
 import { useEffect, useRef, useState } from "react";
 import { ExternalLink, Volume2, VolumeX } from "lucide-react";
+import type {
+  DailyCall,
+  DailyParticipant,
+  DailyEventObjectAppMessage,
+  DailyEventObjectTranscriptionError,
+  DailyEventObjectTranscriptionMessage,
+  DailyEventObjectTranscriptionStarted,
+} from "@daily-co/daily-js";
 import AgentAvatar from "./AgentAvatar";
 import Transcript from "./Transcript";
 import type { TranscriptLine } from "@/lib/api";
 import { DEFAULT_AGENT_COLORS } from "@/lib/config";
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return !!v && typeof v === "object" && !Array.isArray(v);
+}
+
+function normalizeSentiment(v: unknown): "positive" | "neutral" | "negative" {
+  return v === "positive" || v === "negative" || v === "neutral" ? v : "neutral";
+}
+
+function parseTurnAnnotations(v: unknown): TranscriptLine["annotation"][] {
+  if (!Array.isArray(v)) return [];
+  return v.map((a) => {
+    const r = isRecord(a) ? a : {};
+    const label = typeof r.label === "string" ? r.label : "";
+    const relevantKpis = Array.isArray(r.relevantKpis)
+      ? r.relevantKpis.filter((k): k is string => typeof k === "string")
+      : [];
+    return {
+      label,
+      sentiment: normalizeSentiment(r.sentiment),
+      relevantKpis,
+    };
+  });
+}
 
 /** A single latency metric event collected during the call. */
 export interface TurnMetric {
@@ -17,6 +49,8 @@ export interface TurnMetric {
   e2e?: number;
   ts?: number;
 }
+
+type MetricKey = "ttfb" | "llm" | "tts" | "e2e";
 
 /**
  * Props for the CallProvider component.
@@ -93,6 +127,12 @@ export default function CallProvider({
    * callback can bail out if the component unmounted before it resolved.
    */
   const destroyedRef = useRef(false);
+  /** Daily call object for this session. */
+  const callRef = useRef<DailyCall | null>(null);
+  /** Optional WS relay for dev transcripts/metrics. */
+  const wsRef = useRef<WebSocket | null>(null);
+  /** PCC Session API polling timer (used as a fallback metrics source). */
+  const pccPollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   /**
    * Maps Daily session_id → human-readable participant name.
    * Kept outside React state because it's read synchronously inside
@@ -183,15 +223,12 @@ export default function CallProvider({
           if (res.ok) {
             const data = await res.json();
             savedLineCountRef.current = currentLines.length;
-            if (data.outcome) setLiveOutcome(data.outcome);
+            if (isRecord(data) && typeof data.outcome === "string") setLiveOutcome(data.outcome);
             // Apply turn annotations from classification
-            const kpi = data.kpiScores as any;
-            if (kpi?.turnAnnotations && Array.isArray(kpi.turnAnnotations)) {
-              setAnnotations(kpi.turnAnnotations.map((a: any) => ({
-                label: a.label || "",
-                sentiment: a.sentiment || "neutral",
-                relevantKpis: Array.isArray(a.relevantKpis) ? a.relevantKpis : [],
-              })));
+            if (isRecord(data)) {
+              const kpiScores = isRecord(data.kpiScores) ? data.kpiScores : null;
+              const ann = parseTurnAnnotations(kpiScores?.turnAnnotations);
+              if (ann.length > 0) setAnnotations(ann);
             }
           }
         }
@@ -235,7 +272,7 @@ export default function CallProvider({
       // Bail out if the component unmounted while the import was in flight.
       if (destroyedRef.current) return;
       // Prevent double-initialisation (React strict-mode fires effects twice).
-      if ((containerRef as any)._call) return;
+      if (callRef.current) return;
       const DailyIframe = mod.default;
 
       // Create an audio-only call object — no local mic or camera.
@@ -245,7 +282,7 @@ export default function CallProvider({
         subscribeToTracksAutomatically: true, // auto-subscribe to remote tracks
       });
       // Stash the call on the ref so cleanup and guard checks can access it.
-      (containerRef as any)._call = call;
+      callRef.current = call;
 
       // ── Audio element management ────────────────────────────────────
       // We play remote audio by creating hidden <audio> DOM elements.
@@ -294,41 +331,46 @@ export default function CallProvider({
        */
       call.on("joined-meeting", () => {
         const all = call.participants();
-        for (const [k, p] of Object.entries(all)) {
+        for (const [k, p] of Object.entries(all) as Array<[string, DailyParticipant]>) {
           if (k === "local") continue;
           if (p.user_name) {
             // Map by participantId (key), session_id, and user_id for robust lookups.
             participantsRef.current[k] = p.user_name;
             participantsRef.current[p.session_id] = p.user_name;
-            if ((p as any).user_id) participantsRef.current[(p as any).user_id] = p.user_name;
+            participantsRef.current[p.user_id] = p.user_name;
           }
         }
         console.debug("[CallProvider] joined, participants:", { ...participantsRef.current });
         setStatus("Listening...");
       });
 
-      call.on("transcription-started", (ev: any) => {
+      call.on("transcription-started", (ev: DailyEventObjectTranscriptionStarted) => {
         console.debug("[CallProvider] transcription-started", ev);
       });
 
-      call.on("transcription-error", (ev: any) => {
+      call.on("transcription-error", (ev: DailyEventObjectTranscriptionError) => {
         console.error("[CallProvider] transcription-error", ev);
       });
 
       // ── App-message metrics (agent → browser via Daily) ────────────
       // Agents broadcast latency metrics as app-messages with label "metrics".
       // This works in both dev and PCC mode — no WS relay or Session API needed.
-      call.on("app-message", (ev: any) => {
+      call.on("app-message", (ev: DailyEventObjectAppMessage<unknown>) => {
         if (!ev?.data) return;
         try {
-          const data = typeof ev.data === "string" ? JSON.parse(ev.data) : ev.data;
-          if (data.label !== "metrics") return;
+          const raw = typeof ev.data === "string" ? (JSON.parse(ev.data) as unknown) : ev.data;
+          if (!isRecord(raw)) return;
+          if (raw.label !== "metrics") return;
 
-          const agent: string = data.agent || "Unknown";
+          const agent = typeof raw.agent === "string" ? raw.agent : "Unknown";
+          const type = typeof raw.type === "string" ? raw.type : "";
+          const value = typeof raw.value === "number" ? raw.value : 0;
+          const processor = typeof raw.processor === "string" ? raw.processor.toLowerCase() : "";
 
-          function applyAppMetric(key: keyof TurnMetric, ms: number) {
+          type MetricKey = "ttfb" | "llm" | "tts" | "e2e";
+          function applyAppMetric(key: MetricKey, ms: number) {
             if (!pendingMetrics[agent]) pendingMetrics[agent] = { agent };
-            (pendingMetrics[agent] as any)[key] = ms;
+            pendingMetrics[agent][key] = ms;
 
             for (let i = linesSnapshot.length - 1; i >= 0; i--) {
               if (linesSnapshot[i].speaker === agent && linesSnapshot[i].metrics) {
@@ -349,43 +391,47 @@ export default function CallProvider({
             }
           }
 
-          if (data.type === "ttfb") {
-            const val = data.value ?? 0;
-            if (val <= 0) return;
-            const processor = (data.processor || "").toLowerCase();
-            const isTts = processor.includes("tts") || processor.includes("elevenlabs") || processor.includes("cartesia");
+          if (type === "ttfb") {
+            if (value <= 0) return;
+            const isTts =
+              processor.includes("tts") ||
+              processor.includes("elevenlabs") ||
+              processor.includes("cartesia");
             if (isTts) {
-              applyAppMetric("tts", Math.round(val * 1000));
+              applyAppMetric("tts", Math.round(value * 1000));
             } else {
-              applyAppMetric("ttfb", Math.round(val * 1000));
+              applyAppMetric("ttfb", Math.round(value * 1000));
             }
-          } else if (data.type === "processing") {
-            const val = data.value ?? 0;
-            if (val <= 0) return;
-            const processor = (data.processor || "").toLowerCase();
-            const ms = Math.round(val * 1000);
-            const isTts = processor.includes("tts") || processor.includes("elevenlabs") || processor.includes("cartesia");
+          } else if (type === "processing") {
+            if (value <= 0) return;
+            const ms = Math.round(value * 1000);
+            const isTts =
+              processor.includes("tts") ||
+              processor.includes("elevenlabs") ||
+              processor.includes("cartesia");
             if (!isTts) {
               applyAppMetric("llm", ms);
             }
-          } else if (data.type === "e2e") {
-            const val = data.value ?? 0;
-            if (val <= 0) return;
-            applyAppMetric("e2e", Math.round(val * 1000));
-          } else if (data.type === "turn") {
+          } else if (type === "e2e") {
+            if (value <= 0) return;
+            applyAppMetric("e2e", Math.round(value * 1000));
+          } else if (type === "turn") {
             // If the dev WS relay is actively delivering turns, ignore app-message
             // turns to avoid duplicate transcript lines.
             if (wsTurnsDelivered) return;
-            const text = data.output || "";
+            const text = typeof raw.output === "string" ? raw.output : "";
             const pending = pendingMetrics[agent] || { agent };
-            if (data.e2e != null && !pending.e2e) {
-              pending.e2e = Math.round((data.e2e ?? 0) * 1000);
+            if (typeof raw.e2e === "number" && pending.e2e == null) {
+              pending.e2e = Math.round(raw.e2e * 1000);
             }
             const metric: TurnMetric = {
               ...pending,
               agent,
-              turn: data.turn ?? metricsSnapshot.filter((m) => m.agent === agent).length + 1,
-              ts: data.ts,
+              turn:
+                typeof raw.turn === "number"
+                  ? raw.turn
+                  : metricsSnapshot.filter((m) => m.agent === agent).length + 1,
+              ts: typeof raw.ts === "number" ? raw.ts : undefined,
             };
             metricsSnapshot.push(metric);
             setLiveMetrics([...metricsSnapshot]);
@@ -394,10 +440,9 @@ export default function CallProvider({
             if (text) {
               wsDeliveredData = true;
               // If PCC polling is enabled, stop it once we have clean turn text.
-              const pt = (containerRef as any)._pccPollTimer;
-              if (pt) {
-                (containerRef as any)._pccPollTimer = null;
-                clearInterval(pt);
+              if (pccPollTimerRef.current) {
+                clearInterval(pccPollTimerRef.current);
+                pccPollTimerRef.current = null;
               }
               linesSnapshot.push({
                 id: nextLineId++,
@@ -429,8 +474,7 @@ export default function CallProvider({
         if (!ev) return;
         if (ev.participant.user_name) {
           participantsRef.current[ev.participant.session_id] = ev.participant.user_name;
-          if ((ev.participant as any).user_id)
-            participantsRef.current[(ev.participant as any).user_id] = ev.participant.user_name;
+          participantsRef.current[ev.participant.user_id] = ev.participant.user_name;
         }
       });
 
@@ -506,7 +550,7 @@ export default function CallProvider({
       // Per-turn latency metrics collected from WS events
       const metricsSnapshot: TurnMetric[] = [];
       // Accumulate per-agent partial metrics until a "turn" event finalises them
-      const pendingMetrics: Record<string, Partial<TurnMetric>> = {};
+      const pendingMetrics: Record<string, TurnMetric> = {};
 
       if (agentApiUrl) {
         const wsProto = agentApiUrl.startsWith("https") ? "wss" : "ws";
@@ -514,6 +558,7 @@ export default function CallProvider({
         const wsEndpoint = `${wsProto}://${wsHost}/ws`;
 
         ws = new WebSocket(wsEndpoint);
+        wsRef.current = ws;
 
         ws.onopen = () => {
           console.debug("[CallProvider] WebSocket transcript relay connected");
@@ -527,9 +572,9 @@ export default function CallProvider({
             /** Update the pending bucket and, if the turn line already
              *  exists, patch its metrics + the metricsSnapshot entry.
              *  Creates NEW objects so React memo detects the change. */
-            function applyMetric(key: keyof TurnMetric, ms: number) {
+            function applyMetric(key: MetricKey, ms: number) {
               if (!pendingMetrics[agent]) pendingMetrics[agent] = { agent };
-              (pendingMetrics[agent] as any)[key] = ms;
+              pendingMetrics[agent][key] = ms;
 
               // Late-arriving metric: replace the line object so memo'd Line re-renders
               for (let i = linesSnapshot.length - 1; i >= 0; i--) {
@@ -599,13 +644,18 @@ export default function CallProvider({
               if (!wsTurnsDelivered) {
                 wsTurnsDelivered = true;
                 // If PCC polling is enabled, stop it now that WS is active.
-                const pt = (containerRef as any)._pccPollTimer;
-                if (pt) {
-                  (containerRef as any)._pccPollTimer = null;
-                  clearInterval(pt);
+                if (pccPollTimerRef.current) {
+                  clearInterval(pccPollTimerRef.current);
+                  pccPollTimerRef.current = null;
                 }
               }
-              wsDeliveredData = true;
+              // Switch from Deepgram fallback to clean turn text. If we already rendered
+              // fallback STT segments, drop them so the transcript doesn't look garbled.
+              if (!wsDeliveredData) {
+                wsDeliveredData = true;
+                linesSnapshot = [];
+                nextLineId = 0;
+              }
               linesSnapshot.push({
                 id: nextLineId++,
                 speaker,
@@ -632,57 +682,77 @@ export default function CallProvider({
           console.debug("[CallProvider] WebSocket transcript relay disconnected");
         };
         ws.onerror = () => {};
-
-        // Stash for cleanup
-        (containerRef as any)._ws = ws;
       }
 
       // ── PCC metrics polling (when no WS relay) ─────────────────────────
       // In PCC mode there's no dev-server WebSocket to deliver live latency
       // data.  Instead, poll the PCC Session API via our proxy route.
-      let pccPollTimer: ReturnType<typeof setInterval> | null = null;
       const pccSessionsCsv = agentSessions?.join(",");
-      console.debug("[CallProvider] PCC poll check:", { agentApiUrl, pccSessionsCsv, willPoll: !agentApiUrl && !!pccSessionsCsv });
+      const debug = process.env.NODE_ENV !== "production";
+      if (debug) {
+        console.debug("[CallProvider] PCC poll check:", { agentApiUrl, pccSessionsCsv, willPoll: !agentApiUrl && !!pccSessionsCsv });
+      }
       if (pccSessionsCsv) {
         let pccLineCount = 0;
-        console.debug("[CallProvider] PCC polling ACTIVE for sessions:", pccSessionsCsv);
+        if (debug) console.debug("[CallProvider] PCC polling ACTIVE for sessions:", pccSessionsCsv);
 
         const pollMetrics = async () => {
           try {
             const res = await fetch(`/api/pcc-metrics?sessions=${pccSessionsCsv}`);
-            console.debug("[CallProvider] PCC poll response:", res.status);
+            if (debug) console.debug("[CallProvider] PCC poll response:", res.status);
             if (!res.ok) { console.warn("[CallProvider] PCC poll failed:", res.status); return; }
-            const data = await res.json();
-            const sessions: any[] = data.sessions || [];
-            if (data.errors) console.warn("[CallProvider] PCC proxy errors:", data.errors);
-            console.debug("[CallProvider] PCC sessions:", sessions.length, "timeseries items:", sessions.reduce((n: number, s: any) => n + (s.timeseries?.length || 0), 0));
+            const data = (await res.json().catch(() => null)) as unknown;
+            const sessions = isRecord(data) && Array.isArray(data.sessions) ? data.sessions : [];
+            if (debug && isRecord(data) && data.errors) console.warn("[CallProvider] PCC proxy errors:", data.errors);
+            if (debug) {
+              console.debug(
+                "[CallProvider] PCC sessions:",
+                sessions.length,
+                "timeseries items:",
+                sessions.reduce((n: number, s) => {
+                  const sr = isRecord(s) ? s : {};
+                  const ts = Array.isArray(sr.timeseries) ? sr.timeseries : [];
+                  return n + ts.length;
+                }, 0),
+              );
+            }
 
             const merged: TurnMetric[] = [];
-            const pccLines: { speaker: string; text: string; ts: number; metrics?: any }[] = [];
+            const pccLines: {
+              speaker: string;
+              text: string;
+              ts: number;
+              metrics?: TranscriptLine["metrics"];
+            }[] = [];
 
             for (const s of sessions) {
-              const ts = s.timeseries || [];
-              const agent = s.session?.agent_name || "Unknown";
+              const sr = isRecord(s) ? s : {};
+              const ts = Array.isArray(sr.timeseries) ? sr.timeseries : [];
+              const agent =
+                isRecord(sr.session) && typeof sr.session.agent_name === "string"
+                  ? sr.session.agent_name
+                  : "Unknown";
               for (const t of ts) {
+                const tr = isRecord(t) ? t : {};
                 merged.push({
                   agent,
-                  turn: t.turn_index != null ? t.turn_index + 1 : undefined,
-                  ttfb: t.ttfb ?? undefined,
-                  llm: t.llm_duration ?? undefined,
-                  tts: t.tts_duration ?? undefined,
-                  e2e: t.e2e_latency ?? undefined,
-                  ts: t.ts,
+                  turn: typeof tr.turn_index === "number" ? tr.turn_index + 1 : undefined,
+                  ttfb: typeof tr.ttfb === "number" ? tr.ttfb : undefined,
+                  llm: typeof tr.llm_duration === "number" ? tr.llm_duration : undefined,
+                  tts: typeof tr.tts_duration === "number" ? tr.tts_duration : undefined,
+                  e2e: typeof tr.e2e_latency === "number" ? tr.e2e_latency : undefined,
+                  ts: typeof tr.ts === "number" ? tr.ts : undefined,
                 });
-                if (t.output) {
+                if (typeof tr.output === "string" && tr.output) {
                   pccLines.push({
                     speaker: agent,
-                    text: t.output,
-                    ts: t.ts ?? 0,
+                    text: tr.output,
+                    ts: typeof tr.ts === "number" ? tr.ts : 0,
                     metrics: {
-                      ttfb: t.ttfb ?? undefined,
-                      llm: t.llm_duration ?? undefined,
-                      tts: t.tts_duration ?? undefined,
-                      e2e: t.e2e_latency ?? undefined,
+                      ttfb: typeof tr.ttfb === "number" ? tr.ttfb : undefined,
+                      llm: typeof tr.llm_duration === "number" ? tr.llm_duration : undefined,
+                      tts: typeof tr.tts_duration === "number" ? tr.tts_duration : undefined,
+                      e2e: typeof tr.e2e_latency === "number" ? tr.e2e_latency : undefined,
                     },
                   });
                 }
@@ -716,21 +786,20 @@ export default function CallProvider({
           } catch { /* ignore fetch errors */ }
         };
 
-        pccPollTimer = setInterval(pollMetrics, 3000);
-        setTimeout(pollMetrics, 2000);
-        (containerRef as any)._pccPollTimer = pccPollTimer;
+        // Give PCC sessions a moment to warm up; the Session API can 500 briefly during init.
+        pccPollTimerRef.current = setInterval(pollMetrics, 5000);
+        setTimeout(pollMetrics, 6000);
       }
 
       // ── Daily transcription (room-level Deepgram) ──────────────────────
       // Daily broadcasts transcription-message events to all participants.
       // If the WS relay has already delivered data, skip to avoid
       // duplicates.  Otherwise this is the primary transcript source.
-      // Track when the last final chunk arrived per speaker so we can
-      // consolidate rapid-fire Deepgram chunks into a single line.
-      const lastFinalTs: Record<string, number> = {};
-      const MERGE_WINDOW_MS = 10000;
+      // Deepgram emits sentence/segment-sized events. For the fallback transcript,
+      // merge consecutive final segments for the same speaker so the UI reads like
+      // full turns (until speaker changes).
 
-      call.on("transcription-message", (msg: any) => {
+      call.on("transcription-message", (msg: DailyEventObjectTranscriptionMessage) => {
         if (wsDeliveredData) return; // WS relay is active — skip
         if (!msg) return;
         const text = msg.text;
@@ -741,7 +810,7 @@ export default function CallProvider({
         // falling back to call.participants() if needed.
         let speaker = participantsRef.current[participantId];
         if (!speaker && participantId) {
-          const p = (call.participants() as any)[participantId];
+          const p = call.participants()[participantId];
           if (p?.user_name) {
             participantsRef.current[participantId] = p.user_name;
             participantsRef.current[p.session_id] = p.user_name;
@@ -755,20 +824,16 @@ export default function CallProvider({
         }
 
         const last = linesSnapshot.length > 0 ? linesSnapshot[linesSnapshot.length - 1] : null;
-        const now = Date.now();
-
         if (isFinal) {
-          const elapsed = now - (lastFinalTs[speaker] ?? 0);
           if (last && last.speaker === speaker && last.interim) {
             // Replace interim with final
             linesSnapshot[linesSnapshot.length - 1] = { ...last, text, interim: false };
-          } else if (last && last.speaker === speaker && !last.interim && elapsed < MERGE_WINDOW_MS) {
-            // Same speaker, within merge window — append to existing line
+          } else if (last && last.speaker === speaker && !last.interim) {
+            // Same speaker — append to existing line (treat as one "turn")
             linesSnapshot[linesSnapshot.length - 1] = { ...last, text: last.text + " " + text };
           } else {
             linesSnapshot.push({ id: nextLineId++, speaker, text });
           }
-          lastFinalTs[speaker] = now;
         } else {
           if (last && last.speaker === speaker && last.interim) {
             linesSnapshot[linesSnapshot.length - 1] = { ...last, text };
@@ -839,10 +904,10 @@ export default function CallProvider({
               extra: { interim_results: true },
             });
             console.debug("[CallProvider] startTranscription succeeded");
-          } catch (err: any) {
+          } catch (err: unknown) {
             console.debug(
               "[CallProvider] startTranscription (expected if already active):",
-              err?.message || err,
+              err instanceof Error ? err.message : err,
             );
           }
         })
@@ -854,21 +919,21 @@ export default function CallProvider({
       destroyedRef.current = true;
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
       // Close WebSocket relay if open
-      const ws = (containerRef as any)._ws;
+      const ws = wsRef.current;
       if (ws) {
-        (containerRef as any)._ws = null;
+        wsRef.current = null;
         ws.close();
       }
       // Stop PCC metrics polling
-      const pt = (containerRef as any)._pccPollTimer;
+      const pt = pccPollTimerRef.current;
       if (pt) {
-        (containerRef as any)._pccPollTimer = null;
+        pccPollTimerRef.current = null;
         clearInterval(pt);
       }
       // Tear down Daily call
-      const call = (containerRef as any)._call;
+      const call = callRef.current;
       if (call) {
-        (containerRef as any)._call = null;
+        callRef.current = null;
         call.leave().then(() => call.destroy()).catch(() => call.destroy());
       }
     };
@@ -882,12 +947,6 @@ export default function CallProvider({
       .map((m) => m[key])
       .filter((v): v is number => typeof v === "number" && v > 0);
     return vals.length > 0 ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : null;
-  }
-
-  function latencyColor(ms: number): string {
-    if (ms < 500) return "text-emerald-400";
-    if (ms < 1000) return "text-amber-400";
-    return "text-red-400";
   }
 
   const aggTtfb = avgOf("ttfb");

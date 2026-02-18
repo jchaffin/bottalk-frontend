@@ -41,11 +41,13 @@ export default function HomeClient({ scenarios }: HomeClientProps) {
   const [agentSessions, setAgentSessions] = useState<string[] | undefined>();
   const [agentColors, setAgentColors] = useState<[string, string]>(DEFAULT_AGENT_COLORS);
   const [error, setError] = useState<string | null>(null);
+  const stopInFlightRef = useRef<Promise<void> | null>(null);
   const collectedMetricsRef = useRef<TurnMetric[]>([]);
 
   // ── Bootstrap: register cleanup ─────────────────────────────────
   useEffect(() => {
-    stopConversation().catch(() => {});
+    // stopConversation() deletes rooms; ensure callers can await it to avoid races.
+    stopInFlightRef.current = stopConversation().catch(() => {});
 
     const cleanup = () => { stopConversation().catch(() => {}); };
     window.addEventListener("beforeunload", cleanup);
@@ -88,6 +90,7 @@ export default function HomeClient({ scenarios }: HomeClientProps) {
     setError(null);
     setPhase("starting");
     try {
+      await stopInFlightRef.current;
       const resolvedPrompt1 = replaceVariables(prompts.agent1.prompt, variables.agent1);
       const resolvedPrompt2 = replaceVariables(prompts.agent2.prompt, variables.agent2);
       const res = await startConversation({
@@ -111,6 +114,7 @@ export default function HomeClient({ scenarios }: HomeClientProps) {
     setScenarioLabel("Quick Start — Sarah & Mike");
     setPhase("starting");
     try {
+      await stopInFlightRef.current;
       const res = await startQuickCall();
       setRoomUrl(res.roomUrl);
       setToken(res.token);

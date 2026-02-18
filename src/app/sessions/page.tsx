@@ -3,6 +3,28 @@ import type { Session, Conversation } from "@/generated/prisma/client";
 import Link from "next/link";
 import SessionRow from "@/components/SessionRow";
 
+type LatencyMetricPoint = {
+  ttfb?: number;
+  llm?: number;
+  tts?: number;
+  e2e?: number;
+};
+
+function asFiniteNumber(v: unknown): number | undefined {
+  return typeof v === "number" && Number.isFinite(v) ? v : undefined;
+}
+
+function parseLatencyMetricPoint(v: unknown): LatencyMetricPoint | null {
+  if (!v || typeof v !== "object") return null;
+  const r = v as Record<string, unknown>;
+  return {
+    ttfb: asFiniteNumber(r.ttfb),
+    llm: asFiniteNumber(r.llm),
+    tts: asFiniteNumber(r.tts),
+    e2e: asFiniteNumber(r.e2e),
+  };
+}
+
 interface SessionData {
   id: string;
   roomName: string;
@@ -54,11 +76,16 @@ export default async function SessionsPage() {
   const sessionData: SessionData[] = sessions.map((s: Session) => {
     const sm = metricsBySession.get(s.id);
     const conv = convByRoom.get(s.roomUrl);
-    const convLm = (conv?.latencyMetrics as any[] | null) ?? [];
-    const cmTtfb = convLm.map((m: any) => m.ttfb).filter((v: any): v is number => typeof v === "number" && v > 0);
-    const cmLlm = convLm.map((m: any) => m.llm).filter((v: any): v is number => typeof v === "number" && v > 0);
-    const cmTts = convLm.map((m: any) => m.tts).filter((v: any): v is number => typeof v === "number" && v > 0);
-    const cmE2e = convLm.map((m: any) => m.e2e).filter((v: any): v is number => typeof v === "number" && v > 0);
+    const convLmRaw = conv?.latencyMetrics;
+    const convLm = Array.isArray(convLmRaw)
+      ? convLmRaw
+          .map(parseLatencyMetricPoint)
+          .filter((m): m is LatencyMetricPoint => m != null)
+      : [];
+    const cmTtfb = convLm.map((m) => m.ttfb).filter((v): v is number => typeof v === "number" && v > 0);
+    const cmLlm = convLm.map((m) => m.llm).filter((v): v is number => typeof v === "number" && v > 0);
+    const cmTts = convLm.map((m) => m.tts).filter((v): v is number => typeof v === "number" && v > 0);
+    const cmE2e = convLm.map((m) => m.e2e).filter((v): v is number => typeof v === "number" && v > 0);
 
     return {
       id: s.id,
@@ -79,12 +106,17 @@ export default async function SessionsPage() {
   const sessionRoomUrls = new Set(sessions.map((s: Session) => s.roomUrl));
   for (const c of conversations) {
     if (c.roomUrl && sessionRoomUrls.has(c.roomUrl)) continue;
-    const lm = (c.latencyMetrics as any[] | null) ?? [];
-    const lines = (c.lines as any[] | null) ?? [];
-    const cmTtfb = lm.map((m: any) => m.ttfb).filter((v: any): v is number => typeof v === "number" && v > 0);
-    const cmLlm = lm.map((m: any) => m.llm).filter((v: any): v is number => typeof v === "number" && v > 0);
-    const cmTts = lm.map((m: any) => m.tts).filter((v: any): v is number => typeof v === "number" && v > 0);
-    const cmE2e = lm.map((m: any) => m.e2e).filter((v: any): v is number => typeof v === "number" && v > 0);
+    const lmRaw = c.latencyMetrics;
+    const lm = Array.isArray(lmRaw)
+      ? lmRaw
+          .map(parseLatencyMetricPoint)
+          .filter((m): m is LatencyMetricPoint => m != null)
+      : [];
+    const lineCount = Array.isArray(c.lines) ? (c.lines as unknown[]).length : 0;
+    const cmTtfb = lm.map((m) => m.ttfb).filter((v): v is number => typeof v === "number" && v > 0);
+    const cmLlm = lm.map((m) => m.llm).filter((v): v is number => typeof v === "number" && v > 0);
+    const cmTts = lm.map((m) => m.tts).filter((v): v is number => typeof v === "number" && v > 0);
+    const cmE2e = lm.map((m) => m.e2e).filter((v): v is number => typeof v === "number" && v > 0);
 
     sessionData.push({
       id: c.id,
@@ -95,7 +127,7 @@ export default async function SessionsPage() {
       llm: avg(cmLlm),
       tts: avg(cmTts),
       e2e: avg(cmE2e),
-      turns: lm.length > 0 ? lm.length : lines.length,
+      turns: lm.length > 0 ? lm.length : lineCount,
       conversationId: c.id,
       createdAt: c.createdAt.toISOString(),
     });

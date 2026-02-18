@@ -4,6 +4,20 @@ import { embedBatch } from "@/lib/embeddings";
 import { classifyTranscript } from "@/lib/kpis";
 import { getIndex } from "@/lib/pinecone";
 
+type TranscriptLineInput = { speaker: string; text: string };
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return !!v && typeof v === "object" && !Array.isArray(v);
+}
+
+function parseLine(v: unknown): TranscriptLineInput {
+  if (!isRecord(v)) return { speaker: "Unknown", text: "" };
+  return {
+    speaker: typeof v.speaker === "string" ? v.speaker : "Unknown",
+    text: typeof v.text === "string" ? v.text : "",
+  };
+}
+
 export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -43,8 +57,11 @@ export async function PATCH(
 ) {
   try {
     const { id } = await params;
-    const body = await request.json();
-    const { lines, latencyMetrics, summary } = body;
+    const rawBody = (await request.json().catch(() => null)) as unknown;
+    const body = isRecord(rawBody) ? rawBody : {};
+    const lines = body.lines;
+    const latencyMetrics = body.latencyMetrics;
+    const summary = body.summary;
 
     const existing = await prisma.conversation.findUnique({ where: { id } });
     if (!existing) {
@@ -52,7 +69,7 @@ export async function PATCH(
     }
 
     const cleanLines = Array.isArray(lines)
-      ? lines.map((l: any) => ({ speaker: l.speaker ?? "Unknown", text: l.text ?? "" }))
+      ? lines.map(parseLine)
       : undefined;
 
     // Build the update payload
@@ -85,7 +102,10 @@ export async function PATCH(
 
     // Embed new lines in the background (fire-and-forget)
     if (cleanLines && cleanLines.length > 0 && process.env.PINECONE_API_KEY) {
-      incrementalEmbed(id, cleanLines, existing.lines as any[] | null).catch((err) =>
+      const previousLines = Array.isArray(existing.lines)
+        ? (existing.lines as unknown[]).map(parseLine)
+        : null;
+      incrementalEmbed(id, cleanLines, previousLines).catch((err) =>
         console.error("Incremental embed error:", err),
       );
     }

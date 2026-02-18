@@ -3,7 +3,8 @@ import prisma from "@/lib/prisma";
 import { PCC_AGENT_NAME } from "@/lib/config";
 
 const PCC_API = "https://api.pipecat.daily.co/v1/public";
-const PCC_API_KEY = process.env.PIPECAT_CLOUD_API_KEY!;
+const PCC_API_KEY =
+  process.env.PIPECAT_CLOUD_PUBLIC_API_KEY || process.env.PIPECAT_CLOUD_API_KEY;
 const DAILY_API_KEY = process.env.DAILY_API_KEY!;
 
 export async function POST() {
@@ -19,18 +20,20 @@ export async function POST() {
       );
 
       // Stop every agent on Pipecat Cloud
-      await Promise.allSettled(
-        allAgentSessionIds.map((sessionId: string) =>
-          fetch(`${PCC_API}/${PCC_AGENT_NAME}/stop`, {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${PCC_API_KEY}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ sessionId }),
-          }),
-        ),
-      );
+      if (PCC_API_KEY) {
+        await Promise.allSettled(
+          allAgentSessionIds.map((sessionId: string) =>
+            fetch(`${PCC_API}/${PCC_AGENT_NAME}/stop`, {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${PCC_API_KEY}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({ sessionId }),
+            }),
+          ),
+        );
+      }
 
       // Delete the Daily rooms to force-disconnect any stragglers
       await Promise.allSettled(

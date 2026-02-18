@@ -106,7 +106,7 @@ export async function startQuickCall(): Promise<StartResponse> {
 
 /** Terminate running agent sessions. */
 export async function stopConversation(): Promise<void> {
-  await fetch(`${AGENT_API}/api/stop`, { method: "POST" });
+  await fetch(`${AGENT_API}/api/stop`, { method: "POST", keepalive: true });
 }
 
 /** A scenario as stored in the database. */
@@ -171,9 +171,19 @@ export interface SavedConversation {
   agentNames: string[];
   lines: { speaker: string; text: string }[];
   roomUrl?: string | null;
-  latencyMetrics?: any[] | null;
+  latencyMetrics?: LatencyMetric[] | null;
   createdAt: string;
 }
+
+export type LatencyMetric = {
+  agent: string;
+  turn?: number;
+  ttfb?: number;
+  llm?: number;
+  tts?: number;
+  e2e?: number;
+  ts?: number;
+};
 
 /** Save a conversation transcript. */
 export async function saveTranscript(
@@ -182,7 +192,7 @@ export async function saveTranscript(
     agentNames: string[];
     lines: { speaker: string; text: string }[];
     roomUrl?: string;
-    latencyMetrics?: any[];
+    latencyMetrics?: LatencyMetric[];
   },
 ): Promise<SavedConversation> {
   const res = await fetch(`${NEXT_API}/api/transcripts`, {

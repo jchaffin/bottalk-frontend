@@ -177,19 +177,33 @@ Only annotate ~30-50% of turns. Leave the rest with empty labels.`,
       : "{}"
     : "{}";
 
-  const parsed = JSON.parse(outputText);
+  const parsed = JSON.parse(outputText) as unknown;
 
-  const turnAnnotations: TurnAnnotation[] = Array.isArray(parsed.turnAnnotations)
-    ? parsed.turnAnnotations.map((a: any) => ({
-        label: a.label || "",
-        sentiment: (["positive", "neutral", "negative"].includes(a.sentiment) ? a.sentiment : "neutral") as TurnSentiment,
-        relevantKpis: Array.isArray(a.relevantKpis) ? a.relevantKpis : [],
-      }))
+  const isRecord = (v: unknown): v is Record<string, unknown> =>
+    !!v && typeof v === "object" && !Array.isArray(v);
+
+  const parsedObj = isRecord(parsed) ? parsed : {};
+  const rawTurnAnnotations = parsedObj.turnAnnotations;
+
+  const turnAnnotations: TurnAnnotation[] = Array.isArray(rawTurnAnnotations)
+    ? rawTurnAnnotations.map((a: unknown) => {
+        const r = isRecord(a) ? a : {};
+        const label = typeof r.label === "string" ? r.label : "";
+        const rawSentiment = typeof r.sentiment === "string" ? r.sentiment : "neutral";
+        const sentiment = (["positive", "neutral", "negative"].includes(rawSentiment)
+          ? rawSentiment
+          : "neutral") as TurnSentiment;
+        const KPI_KEYS = new Set<string>(KPI_DEFINITIONS.map((d) => d.key));
+        const relevantKpis = Array.isArray(r.relevantKpis)
+          ? (r.relevantKpis.filter((k): k is string => typeof k === "string" && KPI_KEYS.has(k)) as KpiKey[])
+          : ([] as KpiKey[]);
+        return { label, sentiment, relevantKpis };
+      })
     : [];
 
   return {
-    scores: parsed.scores as KpiScores,
-    outcome: parsed.outcome as OutcomeLabel,
+    scores: (parsedObj.scores ?? {}) as KpiScores,
+    outcome: (parsedObj.outcome ?? "average") as OutcomeLabel,
     turnAnnotations,
   };
 }

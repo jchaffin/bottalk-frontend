@@ -27,6 +27,18 @@ const KPI_LABELS: Record<string, string> = Object.fromEntries(
   KPI_DEFINITIONS.map((k) => [k.key, k.label]),
 );
 
+type ConversationView = {
+  id: string;
+  title: string;
+  agentNames: string[];
+  createdAt: string;
+  roomUrl?: string | null;
+  outcome?: OutcomeLabel | null;
+  lines: { speaker: string; text: string }[];
+  latencyMetrics?: LatencyMetric[] | null;
+  kpiScores?: (KpiScores & { turnAnnotations?: TurnAnnotation[] }) | null;
+};
+
 function ScoreBar({ label, value }: { label: string; value: number }) {
   const pct = Math.min(100, Math.max(0, value));
   const color =
@@ -120,7 +132,7 @@ function AgentLatencySummary({ agent, metrics }: { agent: string; metrics: Laten
 export default function TranscriptPage() {
   const params = useParams();
   const id = params.id as string;
-  const [conversation, setConversation] = useState<any | null>(null);
+  const [conversation, setConversation] = useState<ConversationView | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -153,13 +165,13 @@ export default function TranscriptPage() {
     );
   }
 
-  const lines = conversation.lines as { speaker: string; text: string }[];
+  const lines = conversation.lines;
   const colorMap: Record<string, string> = {};
-  conversation.agentNames.forEach((name: string, idx: number) => {
+  conversation.agentNames.forEach((name, idx) => {
     colorMap[name] = AGENT_COLOR_CLASSES[idx] || AGENT_COLOR_CLASSES[0];
   });
 
-  const kpiData = conversation.kpiScores as (KpiScores & { turnAnnotations?: TurnAnnotation[] }) | null;
+  const kpiData = conversation.kpiScores ?? null;
   const scores = kpiData ? {
     discovery: kpiData.discovery,
     objectionHandling: kpiData.objectionHandling,
@@ -219,7 +231,7 @@ export default function TranscriptPage() {
               <ScoreBar
                 key={kpi.key}
                 label={kpi.label}
-                value={(scores as any)[kpi.key] ?? 0}
+                value={scores[kpi.key as keyof typeof scores] ?? 0}
               />
             ))}
           </div>

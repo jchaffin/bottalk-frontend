@@ -1,12 +1,9 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
-import { Loader2 } from "lucide-react";
 import {
   startQuickCall,
   stopConversation,
-  DEFAULT_VOICE_1,
-  DEFAULT_VOICE_2,
 } from "@/lib/api";
 import { DEFAULT_AGENT_COLORS } from "@/lib/config";
 import ActiveCall from "@/components/ActiveCall";
@@ -30,19 +27,27 @@ export default function CallPage() {
     if (startedRef.current) return;
     startedRef.current = true;
 
-    stopConversation().catch(() => {});
+    // IMPORTANT: stopConversation() is destructive (stops all active sessions + deletes rooms).
+    // We must await it before starting a new call, otherwise the stop can race and kill
+    // the room/sessions we just created.
+    (async () => {
+      try {
+        await stopConversation();
+      } catch {
+        // best-effort cleanup; don't block call start if stop fails
+      }
 
-    startQuickCall()
-      .then(({ roomUrl, token, agentSessions }) => {
+      try {
+        const { roomUrl, token, agentSessions } = await startQuickCall();
         setRoomUrl(roomUrl);
         setToken(token);
         setAgentSessions(agentSessions);
         setPhase("active");
-      })
-      .catch((err) => {
+      } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to start call");
         setPhase("error");
-      });
+      }
+    })();
 
     const cleanup = () => { stopConversation().catch(() => {}); };
     window.addEventListener("beforeunload", cleanup);

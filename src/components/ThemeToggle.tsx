@@ -15,31 +15,32 @@ function applyTheme(theme: Theme) {
 }
 
 export default function ThemeToggle() {
-  const [theme, setTheme] = useState<Theme>("system");
+  const [theme, setTheme] = useState<Theme>(() => {
+    if (typeof window === "undefined") return "system";
+    const stored = localStorage.getItem("theme");
+    return stored === "light" || stored === "dark" || stored === "system" ? stored : "system";
+  });
 
   useEffect(() => {
-    const stored = localStorage.getItem("theme") as Theme | null;
-    const initial = stored || "system";
-    setTheme(initial);
-    applyTheme(initial);
+    // Apply theme on mount + whenever it changes.
+    applyTheme(theme);
+    localStorage.setItem("theme", theme);
+  }, [theme]);
 
-    // Listen for system preference changes
+  useEffect(() => {
+    // Listen for system preference changes (only matters in "system" mode)
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
     const handler = () => {
-      if ((localStorage.getItem("theme") || "system") === "system") {
-        applyTheme("system");
-      }
+      if (theme === "system") applyTheme("system");
     };
     mq.addEventListener("change", handler);
     return () => mq.removeEventListener("change", handler);
-  }, []);
+  }, [theme]);
 
   function cycle() {
     const order: Theme[] = ["light", "dark", "system"];
     const next = order[(order.indexOf(theme) + 1) % order.length];
     setTheme(next);
-    localStorage.setItem("theme", next);
-    applyTheme(next);
   }
 
   return (

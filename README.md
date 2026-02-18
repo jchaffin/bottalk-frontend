@@ -19,7 +19,7 @@ Create `.env.local`:
 # Required
 DAILY_API_KEY=
 OPENAI_API_KEY=
-PIPECAT_CLOUD_API_KEY=
+PIPECAT_CLOUD_PUBLIC_API_KEY=
 PRISMA_DATABASE_URL=prisma+postgres://...   # Accelerate proxy
 POSTGRES_URL=postgres://...                  # Direct TCP (migrations)
 

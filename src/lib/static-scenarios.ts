@@ -1,4 +1,5 @@
 import { PrismaClient } from "@/generated/prisma/client";
+import type { ScenarioModel } from "@/generated/prisma/models/Scenario";
 import { withAccelerate } from "@prisma/extension-accelerate";
 import { DEFAULT_VOICE_1, DEFAULT_VOICE_2 } from "./config";
 import type { Scenario } from "./api";
@@ -126,13 +127,13 @@ async function getStaticScenarios(): Promise<Scenario[]> {
       orderBy: { id: "asc" },
     });
 
-    cachedScenarios = scenarios.map((s: any): Scenario => ({
+    cachedScenarios = scenarios.map((s: ScenarioModel): Scenario => ({
       id: s.id,
       slug: s.slug,
       title: s.title,
       description: s.description,
       builtIn: s.builtIn,
-      agents: s.agents as any[], // Prisma Json type
+      agents: Array.isArray(s.agents) ? (s.agents as unknown as Scenario["agents"]) : [],
     }));
 
     await prisma.$disconnect();

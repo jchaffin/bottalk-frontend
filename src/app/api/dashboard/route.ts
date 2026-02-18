@@ -2,6 +2,28 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import type { SessionMetric, Conversation } from "@/generated/prisma/client";
 
+type LatencyMetricPoint = {
+  ttfb?: number;
+  llm?: number;
+  tts?: number;
+  e2e?: number;
+};
+
+function asFiniteNumber(v: unknown): number | undefined {
+  return typeof v === "number" && Number.isFinite(v) ? v : undefined;
+}
+
+function parseLatencyMetricPoint(v: unknown): LatencyMetricPoint | null {
+  if (!v || typeof v !== "object") return null;
+  const r = v as Record<string, unknown>;
+  return {
+    ttfb: asFiniteNumber(r.ttfb),
+    llm: asFiniteNumber(r.llm),
+    tts: asFiniteNumber(r.tts),
+    e2e: asFiniteNumber(r.e2e),
+  };
+}
+
 /**
  * GET /api/dashboard — Consolidated dashboard data.
  * Returns latency aggregates, KPI summaries, and recent sessions.
@@ -9,23 +31,70 @@ import type { SessionMetric, Conversation } from "@/generated/prisma/client";
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
-    const days = parseInt(searchParams.get("days") || "7", 10);
+    const rawDays = parseInt(searchParams.get("days") || "7", 10);
+    const days = Number.isFinite(rawDays) ? Math.min(Math.max(rawDays, 1), 365) : 7;
 
     const since = new Date();
     since.setDate(since.getDate() - days);
 
-    // Fetch metrics and conversations in parallel
-    const [metrics, conversations, totalSessions] = await Promise.all([
+    // Fetch only the data we need. Avoid loading full transcript `lines`
+    // for every conversation (that can get huge and cause timeouts).
+    const [metrics, conversationsMeta, recentConversationsRaw, totalSessions] = await Promise.all([
       prisma.sessionMetric.findMany({
         where: { createdAt: { gte: since } },
+        select: {
+          createdAt: true,
+          ttfb: true,
+          llmDuration: true,
+          ttsDuration: true,
+          e2eLatency: true,
+          userBotLatency: true,
+        },
         orderBy: { createdAt: "asc" },
       }),
       prisma.conversation.findMany({
         where: { createdAt: { gte: since } },
+        select: {
+          id: true,
+          title: true,
+          agentNames: true,
+          outcome: true,
+          kpiScores: true,
+          latencyMetrics: true,
+          createdAt: true,
+        },
         orderBy: { createdAt: "desc" },
+      }),
+      prisma.conversation.findMany({
+        where: { createdAt: { gte: since } },
+        select: {
+          id: true,
+          title: true,
+          agentNames: true,
+          outcome: true,
+          kpiScores: true,
+          lines: true,
+          createdAt: true,
+        },
+        orderBy: { createdAt: "desc" },
+        take: 10,
       }),
       prisma.session.count(),
     ]);
+
+    // Prisma + JSON fields can lose type precision under some build setups.
+    // Re-assert the shapes we rely on to avoid implicit-any lint errors.
+    type MetricRow = Pick<
+      SessionMetric,
+      "createdAt" | "ttfb" | "llmDuration" | "ttsDuration" | "e2eLatency" | "userBotLatency"
+    >;
+    const metricRows = metrics as MetricRow[];
+    const conversationRows = conversationsMeta as Array<
+      Pick<
+        Conversation,
+        "id" | "title" | "agentNames" | "outcome" | "kpiScores" | "latencyMetrics" | "createdAt"
+      >
+    >;
 
     // Latency aggregates — merge SessionMetric table data with
     // per-conversation latencyMetrics JSON (the WebSocket-collected data)
@@ -35,21 +104,24 @@ export async function GET(request: NextRequest) {
       arr.length ? Math.round(arr.reduce((a, b) => a + b, 0) / arr.length) : null;
 
     // Source 1: SessionMetric table (from agent webhook)
-    const smTtfb = valid(metrics.map((m: SessionMetric) => m.ttfb));
-    const smLlm = valid(metrics.map((m: SessionMetric) => m.llmDuration));
-    const smTts = valid(metrics.map((m: SessionMetric) => m.ttsDuration));
-    const smE2e = valid(metrics.map((m: SessionMetric) => m.e2eLatency));
-    const ublValues = valid(metrics.map((m: SessionMetric) => m.userBotLatency));
+    const smTtfb = valid(metricRows.map((m) => m.ttfb));
+    const smLlm = valid(metricRows.map((m) => m.llmDuration));
+    const smTts = valid(metricRows.map((m) => m.ttsDuration));
+    const smE2e = valid(metricRows.map((m) => m.e2eLatency));
+    const ublValues = valid(metricRows.map((m) => m.userBotLatency));
 
     // Source 2: conversation.latencyMetrics JSON (from WebSocket relay)
-    const convMetrics = conversations.flatMap((c: Conversation) => {
-      const lm = c.latencyMetrics as any[] | null;
-      return Array.isArray(lm) ? lm : [];
+    const convMetrics: LatencyMetricPoint[] = conversationRows.flatMap((c) => {
+      const lm = c.latencyMetrics;
+      if (!Array.isArray(lm)) return [];
+      return lm
+        .map(parseLatencyMetricPoint)
+        .filter((m): m is LatencyMetricPoint => m != null);
     });
-    const cmTtfb = valid(convMetrics.map((m: any) => m.ttfb));
-    const cmLlm = valid(convMetrics.map((m: any) => m.llm));
-    const cmTts = valid(convMetrics.map((m: any) => m.tts));
-    const cmE2e = valid(convMetrics.map((m: any) => m.e2e));
+    const cmTtfb = valid(convMetrics.map((m) => m.ttfb));
+    const cmLlm = valid(convMetrics.map((m) => m.llm));
+    const cmTts = valid(convMetrics.map((m) => m.tts));
+    const cmE2e = valid(convMetrics.map((m) => m.e2e));
 
     // Prefer conversation-level metrics (more complete), fall back to SessionMetric
     const ttfbValues = cmTtfb.length > 0 ? cmTtfb : smTtfb;
@@ -58,13 +130,13 @@ export async function GET(request: NextRequest) {
     const e2eValues = cmE2e.length > 0 ? cmE2e : smE2e;
 
     // KPI aggregates from classified conversations
-    const classified = conversations.filter((c: Conversation) => c.kpiScores);
+    const classified = conversationRows.filter((c) => c.kpiScores);
     const kpiAverages: Record<string, number | null> = {};
     if (classified.length > 0) {
       const keys = ["discovery", "objectionHandling", "valueArticulation", "turnTaking", "responseRelevance", "nextSteps"];
       for (const key of keys) {
         const vals = classified
-          .map((c: Conversation) => (c.kpiScores as Record<string, number>)?.[key])
+          .map((c: Pick<Conversation, "kpiScores">) => (c.kpiScores as Record<string, number>)?.[key])
           .filter((v: number | undefined): v is number => typeof v === "number");
         kpiAverages[key] = avg(vals);
       }
@@ -95,17 +167,19 @@ export async function GET(request: NextRequest) {
       if (ubl != null && ubl > 0) hourlyLatency[hour].ubl.push(ubl);
     }
 
-    for (const m of metrics) {
+    for (const m of metricRows) {
       const hour = new Date(m.createdAt).toISOString().slice(0, 13) + ":00:00Z";
       addToHour(hour, m.ttfb, m.llmDuration, m.ttsDuration, m.e2eLatency, m.userBotLatency);
     }
 
     // Add conversation-level latency metrics into the timeseries
-    for (const c of conversations) {
-      const lm = c.latencyMetrics as any[] | null;
+    for (const c of conversationRows) {
+      const lm = c.latencyMetrics;
       if (!Array.isArray(lm)) continue;
       const hour = new Date(c.createdAt).toISOString().slice(0, 13) + ":00:00Z";
-      for (const m of lm) {
+      for (const raw of lm as unknown[]) {
+        const m = parseLatencyMetricPoint(raw);
+        if (!m) continue;
         addToHour(hour, m.ttfb, m.llm, m.tts, m.e2e);
       }
     }
@@ -122,21 +196,26 @@ export async function GET(request: NextRequest) {
       }));
 
     // Recent conversations (last 10)
-    const recentConversations = conversations.slice(0, 10).map((c: Conversation) => ({
+    type RecentConversationRow = Pick<
+      Conversation,
+      "id" | "title" | "agentNames" | "outcome" | "kpiScores" | "createdAt"
+    > & { lines: unknown };
+    const recentRows = recentConversationsRaw as RecentConversationRow[];
+    const recentConversations = recentRows.map((c) => ({
       id: c.id,
       title: c.title,
       agentNames: c.agentNames,
       outcome: c.outcome,
       kpiScores: c.kpiScores,
-      lineCount: (c.lines as unknown[]).length,
-      createdAt: c.createdAt.toISOString(),
+      lineCount: Array.isArray(c.lines) ? c.lines.length : 0,
+      createdAt: new Date(c.createdAt).toISOString(),
     }));
 
     return NextResponse.json({
       period: { days, since: since.toISOString() },
       summary: {
         totalSessions,
-        totalConversations: conversations.length,
+        totalConversations: conversationsMeta.length,
         totalMetricPoints: metrics.length + convMetrics.length,
         classifiedCount: classified.length,
       },

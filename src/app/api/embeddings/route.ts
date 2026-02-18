@@ -4,6 +4,14 @@ import { getIndex } from "@/lib/pinecone";
 import { embedText, embedBatch } from "@/lib/embeddings";
 import { classifyTranscript } from "@/lib/kpis";
 
+type UtteranceMatch = {
+  id: string;
+  score?: number;
+  lineIndex?: number;
+  speaker?: string;
+  text?: string;
+};
+
 /**
  * POST /api/embeddings — Embed each utterance of a conversation transcript,
  * classify KPIs, and upsert per-utterance vectors into Pinecone.
@@ -144,20 +152,23 @@ export async function GET(request: NextRequest) {
     // Group matches by conversation, keeping the best-scoring utterance per conversation
     const byConversation = new Map<
       string,
-      { bestScore: number; bestUtterance: any; utterances: any[] }
+      { bestScore: number; bestUtterance: UtteranceMatch; utterances: UtteranceMatch[] }
     >();
 
     for (const match of results.matches ?? []) {
-      const meta = match.metadata as Record<string, any> | undefined;
-      const convId = meta?.conversationId as string | undefined;
+      const meta =
+        match.metadata && typeof match.metadata === "object"
+          ? (match.metadata as Record<string, unknown>)
+          : undefined;
+      const convId = typeof meta?.conversationId === "string" ? meta.conversationId : undefined;
       if (!convId) continue;
 
-      const utterance = {
+      const utterance: UtteranceMatch = {
         id: match.id,
         score: match.score,
-        lineIndex: meta?.lineIndex,
-        speaker: meta?.speaker,
-        text: meta?.text,
+        lineIndex: typeof meta?.lineIndex === "number" ? meta.lineIndex : undefined,
+        speaker: typeof meta?.speaker === "string" ? meta.speaker : undefined,
+        text: typeof meta?.text === "string" ? meta.text : undefined,
       };
 
       const existing = byConversation.get(convId);

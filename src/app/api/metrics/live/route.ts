@@ -4,7 +4,12 @@ import type { Session } from "@/generated/prisma/client";
 import { PCC_AGENT_NAME } from "@/lib/config";
 
 const PCC_API = "https://api.pipecat.daily.co/v1/public";
-const PCC_API_KEY = process.env.PIPECAT_CLOUD_API_KEY!;
+const PCC_API_KEY =
+  process.env.PIPECAT_CLOUD_PUBLIC_API_KEY || process.env.PIPECAT_CLOUD_API_KEY;
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return !!v && typeof v === "object" && !Array.isArray(v);
+}
 
 /**
  * GET /api/metrics/live — Fetch live latency metrics from active PCC sessions.
@@ -18,6 +23,12 @@ const PCC_API_KEY = process.env.PIPECAT_CLOUD_API_KEY!;
  */
 export async function GET(request: NextRequest) {
   try {
+    if (!PCC_API_KEY) {
+      return NextResponse.json(
+        { detail: "Missing PIPECAT_CLOUD_PUBLIC_API_KEY (or PIPECAT_CLOUD_API_KEY)" },
+        { status: 500 },
+      );
+    }
     const { searchParams } = new URL(request.url);
     const filterSessionId = searchParams.get("sessionId");
 
@@ -46,7 +57,8 @@ export async function GET(request: NextRequest) {
               error: `PCC returned ${res.status}`,
             };
           }
-          const data = await res.json();
+          const raw = await res.json();
+          const data = isRecord(raw) ? raw : { raw };
           return {
             pccSessionId,
             dbSessionId: session.id,
@@ -57,16 +69,18 @@ export async function GET(request: NextRequest) {
       ),
     );
 
-    const live = results.map((r: PromiseSettledResult<any>) =>
-      r.status === "fulfilled"
-        ? r.value
-        : { error: (r as PromiseRejectedResult).reason?.message ?? "Unknown error" },
+    const live: Record<string, unknown>[] = results.map(
+      (r: PromiseSettledResult<Record<string, unknown>>) =>
+        r.status === "fulfilled"
+          ? r.value
+          : { error: (r as PromiseRejectedResult).reason?.message ?? "Unknown error" },
     );
 
     // Compute cross-session aggregate.
-    const allTimeseries = live.flatMap((s: any) =>
-      Array.isArray(s.timeseries) ? s.timeseries : [],
-    );
+    const allTimeseries = live.flatMap((s) => {
+      const ts = s.timeseries;
+      return Array.isArray(ts) ? ts : [];
+    });
 
     const vals = (key: string) =>
       allTimeseries
