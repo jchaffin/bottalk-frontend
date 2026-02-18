@@ -707,7 +707,7 @@ export default function CallProvider({
       // Track when the last final chunk arrived per speaker so we can
       // consolidate rapid-fire Deepgram chunks into a single line.
       const lastFinalTs: Record<string, number> = {};
-      const MERGE_WINDOW_MS = 3000;
+      const MERGE_WINDOW_MS = 10000;
 
       call.on("transcription-message", (msg: any) => {
         if (wsDeliveredData) return; // WS relay is active — skip
