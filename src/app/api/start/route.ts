@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 
-import { DEFAULT_VOICE_1, DEFAULT_VOICE_2, DEFAULT_SCENARIO_SLUG, DEFAULT_TOPIC, PCC_AGENT_NAME } from "@/lib/config";
+import { DEFAULT_VOICE_1, DEFAULT_VOICE_2, DEFAULT_SCENARIO_SLUG, DEFAULT_TOPIC, PCC_AGENT_NAME, replaceVariables } from "@/lib/config";
 
 const PCC_API = "https://api.pipecat.daily.co/v1/public";
 const PCC_API_KEY = process.env.PIPECAT_CLOUD_API_KEY!;
@@ -102,15 +102,16 @@ export async function POST(request: NextRequest) {
         const scenarioAgents = scenario.agents as any[];
         const a1 = scenarioAgents[0];
         const a2 = scenarioAgents[1];
+        const shared = { topic };
         agents = [
           {
             name: a1.name,
-            prompt: a1.prompt.replace(/\{\{topic\}\}/g, topic),
+            prompt: replaceVariables(a1.prompt, { ...shared, ...(a1.defaults ?? {}) }),
             voice_id: a1.voice_id || DEFAULT_VOICE_1,
           },
           {
             name: a2.name,
-            prompt: a2.prompt.replace(/\{\{topic\}\}/g, topic),
+            prompt: replaceVariables(a2.prompt, { ...shared, ...(a2.defaults ?? {}) }),
             voice_id: a2.voice_id || DEFAULT_VOICE_2,
           },
         ];
