@@ -449,8 +449,9 @@ export default function CallProvider({
               if (val <= 0) return;
               const processor = (data.processor || "").toLowerCase();
               const isTts = processor.includes("tts") || processor.includes("elevenlabs") || processor.includes("cartesia");
-              // LLM TTFB → "ttfb" field; TTS TTFB is less useful, skip it
-              if (!isTts) {
+              if (isTts) {
+                applyMetric("tts", Math.round(val * 1000));
+              } else {
                 applyMetric("ttfb", Math.round(val * 1000));
               }
             } else if (data.type === "processing") {
@@ -459,9 +460,7 @@ export default function CallProvider({
               const processor = (data.processor || "").toLowerCase();
               const ms = Math.round(val * 1000);
               const isTts = processor.includes("tts") || processor.includes("elevenlabs") || processor.includes("cartesia");
-              if (isTts) {
-                applyMetric("tts", ms);
-              } else {
+              if (!isTts) {
                 applyMetric("llm", ms);
               }
             } else if (data.type === "e2e") {
