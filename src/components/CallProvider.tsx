@@ -313,8 +313,81 @@ export default function CallProvider({
         console.error("[CallProvider] transcription-error", ev);
       });
 
-      // app-message events are high-frequency (RTVI frames, metrics, etc.)
-      // — no handler needed; transcription comes via "transcription-message".
+      // ── App-message metrics (agent → browser via Daily) ────────────
+      // Agents broadcast latency metrics as app-messages with label "metrics".
+      // This works in both dev and PCC mode — no WS relay or Session API needed.
+      call.on("app-message", (ev: any) => {
+        if (!ev?.data) return;
+        try {
+          const raw = typeof ev.data === "string" ? ev.data : JSON.stringify(ev.data);
+          const data = typeof ev.data === "string" ? JSON.parse(ev.data) : ev.data;
+          if (data.label !== "metrics") return;
+
+          const agent: string = data.agent || "Unknown";
+
+          function applyAppMetric(key: keyof TurnMetric, ms: number) {
+            if (!pendingMetrics[agent]) pendingMetrics[agent] = { agent };
+            (pendingMetrics[agent] as any)[key] = ms;
+
+            for (let i = linesSnapshot.length - 1; i >= 0; i--) {
+              if (linesSnapshot[i].speaker === agent && linesSnapshot[i].metrics) {
+                linesSnapshot[i] = {
+                  ...linesSnapshot[i],
+                  metrics: { ...linesSnapshot[i].metrics, [key]: ms },
+                };
+                queueFlush();
+                break;
+              }
+            }
+            for (let i = metricsSnapshot.length - 1; i >= 0; i--) {
+              if (metricsSnapshot[i].agent === agent) {
+                metricsSnapshot[i] = { ...metricsSnapshot[i], [key]: ms };
+                setLiveMetrics([...metricsSnapshot]);
+                break;
+              }
+            }
+          }
+
+          if (data.type === "ttfb") {
+            const val = data.value ?? 0;
+            if (val <= 0) return;
+            const processor = (data.processor || "").toLowerCase();
+            const isTts = processor.includes("tts") || processor.includes("elevenlabs") || processor.includes("cartesia");
+            if (isTts) {
+              applyAppMetric("tts", Math.round(val * 1000));
+            } else {
+              applyAppMetric("ttfb", Math.round(val * 1000));
+            }
+          } else if (data.type === "processing") {
+            const val = data.value ?? 0;
+            if (val <= 0) return;
+            const processor = (data.processor || "").toLowerCase();
+            const ms = Math.round(val * 1000);
+            const isTts = processor.includes("tts") || processor.includes("elevenlabs") || processor.includes("cartesia");
+            if (!isTts) {
+              applyAppMetric("llm", ms);
+            }
+          } else if (data.type === "e2e") {
+            const val = data.value ?? 0;
+            if (val <= 0) return;
+            applyAppMetric("e2e", Math.round(val * 1000));
+          } else if (data.type === "turn") {
+            const pending = pendingMetrics[agent] || { agent };
+            if (data.e2e != null && !pending.e2e) {
+              pending.e2e = Math.round((data.e2e ?? 0) * 1000);
+            }
+            const metric: TurnMetric = {
+              ...pending,
+              agent,
+              turn: data.turn ?? metricsSnapshot.filter((m) => m.agent === agent).length + 1,
+              ts: data.ts,
+            };
+            metricsSnapshot.push(metric);
+            setLiveMetrics([...metricsSnapshot]);
+            delete pendingMetrics[agent];
+          }
+        } catch { /* ignore malformed app-messages */ }
+      });
 
       /**
        * "participant-joined" — a new remote participant enters the room.
@@ -528,6 +601,8 @@ export default function CallProvider({
       let pccPollTimer: ReturnType<typeof setInterval> | null = null;
       const pccSessionsCsv = agentSessions?.join(",");
       if (!agentApiUrl && pccSessionsCsv) {
+        let pccLineCount = 0;
+
         const pollMetrics = async () => {
           try {
             const res = await fetch(`/api/pcc-metrics?sessions=${pccSessionsCsv}`);
@@ -536,6 +611,8 @@ export default function CallProvider({
             const sessions: any[] = data.sessions || [];
 
             const merged: TurnMetric[] = [];
+            const pccLines: { speaker: string; text: string; ts: number; metrics?: any }[] = [];
+
             for (const s of sessions) {
               const ts = s.timeseries || [];
               const agent = s.session?.agent_name || "Unknown";
@@ -549,6 +626,19 @@ export default function CallProvider({
                   e2e: t.e2e_latency ?? undefined,
                   ts: t.ts,
                 });
+                if (t.output) {
+                  pccLines.push({
+                    speaker: agent,
+                    text: t.output,
+                    ts: t.ts ?? 0,
+                    metrics: {
+                      ttfb: t.ttfb ?? undefined,
+                      llm: t.llm_duration ?? undefined,
+                      tts: t.tts_duration ?? undefined,
+                      e2e: t.e2e_latency ?? undefined,
+                    },
+                  });
+                }
               }
             }
 
@@ -558,11 +648,29 @@ export default function CallProvider({
               metricsSnapshot.push(...merged);
               setLiveMetrics([...metricsSnapshot]);
             }
+
+            // Use clean LLM output text from PCC instead of garbled Deepgram STT
+            if (pccLines.length > pccLineCount) {
+              pccLines.sort((a, b) => a.ts - b.ts);
+              wsDeliveredData = true;
+              linesSnapshot = pccLines.map((l, i) => ({
+                id: i,
+                speaker: l.speaker,
+                text: l.text,
+                metrics: l.metrics,
+              }));
+              nextLineId = pccLines.length;
+              pccLineCount = pccLines.length;
+              queueFlush();
+
+              const cleanLines = pccLines.map((l) => ({ speaker: l.speaker, text: l.text }));
+              scheduleIncrementalSave(cleanLines, [...metricsSnapshot]);
+            }
           } catch { /* ignore fetch errors */ }
         };
 
-        pccPollTimer = setInterval(pollMetrics, 5000);
-        setTimeout(pollMetrics, 3000);
+        pccPollTimer = setInterval(pollMetrics, 3000);
+        setTimeout(pollMetrics, 2000);
         (containerRef as any)._pccPollTimer = pccPollTimer;
       }
 
