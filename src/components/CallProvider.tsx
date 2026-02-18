@@ -80,6 +80,8 @@ export default function CallProvider({
   const [liveSummary, setLiveSummary] = useState<string | null>(null);
   /** Live KPI outcome from incremental classification. */
   const [liveOutcome, setLiveOutcome] = useState<string | null>(null);
+  /** Turn annotations from real-time classification, applied to transcript lines. */
+  const [annotations, setAnnotations] = useState<TranscriptLine["annotation"][]>([]);
 
   // ── Refs ──────────────────────────────────────────────────────────────
   /** Hidden DOM node that hosts dynamically-created <audio> elements. */
@@ -179,8 +181,16 @@ export default function CallProvider({
           if (res.ok) {
             const data = await res.json();
             savedLineCountRef.current = currentLines.length;
-            // Pick up outcome from incremental classification
             if (data.outcome) setLiveOutcome(data.outcome);
+            // Apply turn annotations from classification
+            const kpi = data.kpiScores as any;
+            if (kpi?.turnAnnotations && Array.isArray(kpi.turnAnnotations)) {
+              setAnnotations(kpi.turnAnnotations.map((a: any) => ({
+                label: a.label || "",
+                sentiment: a.sentiment || "neutral",
+                relevantKpis: Array.isArray(a.relevantKpis) ? a.relevantKpis : [],
+              })));
+            }
           }
         }
 
@@ -762,8 +772,18 @@ export default function CallProvider({
         </div>
       )}
 
-      {/* Live transcript feed */}
-      <Transcript lines={lines} agentNames={agentNames} />
+      {/* Live transcript feed — merge annotations from classification */}
+      <Transcript
+        lines={annotations.length > 0
+          ? lines.map((line, idx) => {
+              const nonInterimIdx = lines.slice(0, idx + 1).filter((l) => !l.interim).length - 1;
+              const ann = annotations[nonInterimIdx];
+              return ann && !line.interim ? { ...line, annotation: ann } : line;
+            })
+          : lines
+        }
+        agentNames={agentNames}
+      />
 
       {/* Connection status indicator */}
       <p className="text-xs text-muted/60 font-mono">{status}</p>

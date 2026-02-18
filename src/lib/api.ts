@@ -25,6 +25,12 @@ export interface TranscriptLine {
     tts?: number;
     e2e?: number;
   };
+  /** KPI annotation from real-time classification. */
+  annotation?: {
+    label: string;
+    sentiment: "positive" | "neutral" | "negative";
+    relevantKpis: string[];
+  };
 }
 
 export interface AgentPrompt {

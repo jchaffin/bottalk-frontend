@@ -6,6 +6,12 @@ import { Activity } from "lucide-react";
 
 const AGENT_COLOR_CLASSES = ["text-accent-agent1", "text-accent-agent2"];
 
+const SENTIMENT_DOT: Record<string, string> = {
+  positive: "bg-emerald-400",
+  neutral: "bg-amber-400",
+  negative: "bg-red-400",
+};
+
 function latencyColor(ms: number): string {
   if (ms < 500) return "text-emerald-400";
   if (ms < 1000) return "text-amber-400";
@@ -36,6 +42,22 @@ function LatencyBadge({ metrics }: { metrics: NonNullable<TranscriptLine["metric
   );
 }
 
+function AnnotationTag({ annotation }: { annotation: NonNullable<TranscriptLine["annotation"]> }) {
+  if (!annotation.label) return null;
+  const dot = SENTIMENT_DOT[annotation.sentiment] || SENTIMENT_DOT.neutral;
+  return (
+    <div className="flex items-center gap-1.5 mt-0.5">
+      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${dot}`} />
+      <span className="text-[11px] text-muted/80 italic">{annotation.label}</span>
+      {annotation.relevantKpis.length > 0 && (
+        <span className="text-[10px] text-muted/40 font-mono">
+          {annotation.relevantKpis.join(", ")}
+        </span>
+      )}
+    </div>
+  );
+}
+
 const Line = memo(function Line({
   line,
   colorMap,
@@ -45,7 +67,7 @@ const Line = memo(function Line({
 }) {
   const colorClass = colorMap[line.speaker] || "text-muted";
   return (
-    <div className={`py-1.5 ${line.interim ? "opacity-40" : ""}`}>
+    <div className={`py-2 border-b border-border/20 last:border-0 ${line.interim ? "opacity-40" : ""}`}>
       <div>
         <span className={`font-semibold ${colorClass}`}>
           {line.speaker}
@@ -53,11 +75,10 @@ const Line = memo(function Line({
         <span className="text-muted mx-1.5">:</span>
         <span className="text-foreground/90">{line.text}</span>
       </div>
-      {line.metrics && (
-        <div className="mt-1">
-          <LatencyBadge metrics={line.metrics} />
-        </div>
-      )}
+      <div className="flex items-center gap-2 flex-wrap">
+        {line.metrics && <LatencyBadge metrics={line.metrics} />}
+        {line.annotation && <AnnotationTag annotation={line.annotation} />}
+      </div>
     </div>
   );
 });
