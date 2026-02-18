@@ -156,8 +156,6 @@ export default function CallProvider({
   const savedLineCountRef = useRef(0);
   /** Debounce timer for incremental save. */
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  /** Guard: true while a save request is in flight. */
-  const saveInFlightRef = useRef(false);
   /** Number of turns since the last summary refresh. */
   const turnsSinceLastSummaryRef = useRef(0);
 
@@ -184,9 +182,8 @@ export default function CallProvider({
   ) {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
 
+    // Debounce slightly so rapid-fire metric patches don't spam the server
     saveTimerRef.current = setTimeout(async () => {
-      if (saveInFlightRef.current) return;
-      saveInFlightRef.current = true;
       try {
         if (currentLines.length === 0) return;
 
@@ -258,8 +255,6 @@ export default function CallProvider({
         }
       } catch (err) {
         console.error("[CallProvider] Incremental save error:", err);
-      } finally {
-        saveInFlightRef.current = false;
       }
     }, 500);
   }
@@ -325,8 +320,6 @@ export default function CallProvider({
 
       // ── Daily event handlers ────────────────────────────────────────
 
-      const presentAgents = new Set<string>();
-
       /**
        * "joined-meeting" fires once the local participant has connected.
        * We iterate all existing remote participants to populate our
@@ -337,10 +330,10 @@ export default function CallProvider({
         for (const [k, p] of Object.entries(all) as Array<[string, DailyParticipant]>) {
           if (k === "local") continue;
           if (p.user_name) {
+            // Map by participantId (key), session_id, and user_id for robust lookups.
             participantsRef.current[k] = p.user_name;
             participantsRef.current[p.session_id] = p.user_name;
             participantsRef.current[p.user_id] = p.user_name;
-            if (agentNameSet.current.has(p.user_name)) presentAgents.add(p.user_name);
           }
         }
         console.debug("[CallProvider] joined, participants:", { ...participantsRef.current });
@@ -352,7 +345,7 @@ export default function CallProvider({
       });
 
       call.on("transcription-error", (ev: DailyEventObjectTranscriptionError) => {
-        console.debug("[CallProvider] transcription-error (benign during teardown):", ev);
+        console.error("[CallProvider] transcription-error", ev);
       });
 
       // ── App-message metrics (agent → browser via Daily) ────────────
@@ -375,10 +368,16 @@ export default function CallProvider({
             if (!pendingMetrics[agent]) pendingMetrics[agent] = { agent };
             pendingMetrics[agent][key] = ms;
 
-            if (turnMetricsByAgent[agent]) {
-              turnMetricsByAgent[agent] = { ...turnMetricsByAgent[agent], [key]: ms };
+            for (let i = linesSnapshot.length - 1; i >= 0; i--) {
+              if (linesSnapshot[i].speaker === agent && linesSnapshot[i].metrics) {
+                linesSnapshot[i] = {
+                  ...linesSnapshot[i],
+                  metrics: { ...linesSnapshot[i].metrics, [key]: ms },
+                };
+                queueFlush();
+                break;
+              }
             }
-
             for (let i = metricsSnapshot.length - 1; i >= 0; i--) {
               if (metricsSnapshot[i].agent === agent) {
                 metricsSnapshot[i] = { ...metricsSnapshot[i], [key]: ms };
@@ -401,7 +400,7 @@ export default function CallProvider({
               processor.includes("tts") ||
               processor.includes("elevenlabs") ||
               processor.includes("cartesia");
-            applyMetric(isTts ? "tts" : "llm", Math.round(value * 1000));
+            if (!isTts) applyMetric("llm", Math.round(value * 1000));
           } else if (type === "e2e") {
             if (value <= 0) return;
             applyMetric("e2e", Math.round(value * 1000));
@@ -426,17 +425,42 @@ export default function CallProvider({
             setLiveMetrics([...metricsSnapshot]);
             delete pendingMetrics[agent];
 
-            turnMetricsByAgent[agent] = {
-              ttfb: metric.ttfb,
-              llm: metric.llm,
-              tts: metric.tts,
-              e2e: metric.e2e,
-            };
+            if (text) {
+              if (!appMessageActive) {
+                appMessageActive = true;
+                linesSnapshot = [];
+                nextLineId = 0;
+              }
+              linesSnapshot.push({
+                id: nextLineId++,
+                speaker: agent,
+                text,
+                metrics: {
+                  ttfb: metric.ttfb,
+                  llm: metric.llm,
+                  tts: metric.tts,
+                  e2e: metric.e2e,
+                },
+              });
+              // Re-sort when replayed history arrives out of order
+              if (raw.replay && metricsSnapshot.length > 1) {
+                const tsMap = new Map<string, number>();
+                for (const m of metricsSnapshot) {
+                  if (m.ts != null) tsMap.set(`${m.agent}:${m.turn}`, m.ts);
+                }
+                linesSnapshot.sort((a, b) => {
+                  const aTs = tsMap.get(`${a.speaker}:${metricsSnapshot.find((m) => m.agent === a.speaker)?.turn}`) ?? 0;
+                  const bTs = tsMap.get(`${b.speaker}:${metricsSnapshot.find((m) => m.agent === b.speaker)?.turn}`) ?? 0;
+                  return aTs - bTs;
+                });
+              }
+              queueFlush();
 
-            const cleanLines = linesSnapshot
-              .filter((l) => !l.interim)
-              .map((l) => ({ speaker: l.speaker, text: l.text }));
-            scheduleIncrementalSave(cleanLines, [...metricsSnapshot]);
+              const cleanLines = linesSnapshot
+                .filter((l) => !l.interim)
+                .map((l) => ({ speaker: l.speaker, text: l.text }));
+              scheduleIncrementalSave(cleanLines, [...metricsSnapshot]);
+            }
           }
         } catch { /* ignore malformed app-messages */ }
       });
@@ -450,9 +474,6 @@ export default function CallProvider({
         if (ev.participant.user_name) {
           participantsRef.current[ev.participant.session_id] = ev.participant.user_name;
           participantsRef.current[ev.participant.user_id] = ev.participant.user_name;
-          if (agentNameSet.current.has(ev.participant.user_name)) {
-            presentAgents.add(ev.participant.user_name);
-          }
         }
       });
 
@@ -494,13 +515,8 @@ export default function CallProvider({
        */
       call.on("participant-left", (ev) => {
         if (!ev) return;
-        const leftName = participantsRef.current[ev.participant.session_id];
         cleanupAudio(ev.participant.session_id);
         delete participantsRef.current[ev.participant.session_id];
-        if (leftName && agentNameSet.current.has(leftName)) {
-          presentAgents.delete(leftName);
-          if (presentAgents.size === 0) call.leave().catch(() => {});
-        }
       });
 
       // ── Transcript accumulation ─────────────────────────────────────────
@@ -518,19 +534,30 @@ export default function CallProvider({
         });
       }
 
+      // True once we've received at least one app-message "turn" with text.
+      // Suppresses the Deepgram STT fallback so we don't get garbled dupes.
+      let appMessageActive = false;
+
       const metricsSnapshot: TurnMetric[] = [];
       const pendingMetrics: Record<string, TurnMetric> = {};
+      // Dedup replayed history events by (agent, turn) to avoid double-counting.
       const seenTurns = new Set<string>();
-      const turnMetricsByAgent: Record<string, TranscriptLine["metrics"]> = {};
 
-      // ── Daily transcription (room-level Deepgram) ──────────────────────
-      // Primary transcript source. One line per speaker turn.
-      // Metrics from app-messages are attached when the speaker changes.
-      let currentSpeaker = "";
-      let currentLineIdx = -1;
-      let committedText = "";
+      // ── Daily transcription (room-level Deepgram) — visual fallback ────
+      // Shows interim STT text until the first app-message "turn" arrives
+      // with clean LLM output. Once app-messages are delivering, this is
+      // suppressed.
 
-      function resolveSpeaker(participantId: string): string {
+      call.on("transcription-message", (msg: DailyEventObjectTranscriptionMessage) => {
+        if (appMessageActive) return;
+        if (!msg) return;
+        const text = msg.text;
+        if (!text) return;
+        console.log("[CallProvider] transcription-message:", text.slice(0, 60), "from:", msg.participantId);
+        const isFinal = msg.rawResponse?.is_final ?? true;
+        const participantId = msg.participantId || "";
+        // Daily emits participantId here (not session_id). Resolve name from our map,
+        // falling back to call.participants() if needed.
         let speaker = participantsRef.current[participantId];
         if (!speaker && participantId) {
           const p = call.participants()[participantId];
@@ -541,43 +568,28 @@ export default function CallProvider({
             speaker = p.user_name;
           }
         }
-        return speaker || "Unknown";
-      }
-
-      call.on("transcription-message", (msg: DailyEventObjectTranscriptionMessage) => {
-        if (!msg || !msg.text) return;
-        const text = msg.text;
-        const raw = msg.rawResponse;
-        const isFinal = raw ? (raw.is_final === true) : true;
-        const speaker = resolveSpeaker(msg.participantId || "");
-
-        if (speaker !== currentSpeaker) {
-          if (currentLineIdx >= 0 && turnMetricsByAgent[currentSpeaker]) {
-            linesSnapshot[currentLineIdx] = {
-              ...linesSnapshot[currentLineIdx],
-              metrics: turnMetricsByAgent[currentSpeaker],
-            };
-            delete turnMetricsByAgent[currentSpeaker];
-          }
-          currentSpeaker = speaker;
-          committedText = "";
-          currentLineIdx = linesSnapshot.length;
-          linesSnapshot.push({ id: nextLineId++, speaker, text: "", interim: true });
+        speaker = speaker || "Unknown";
+        if (speaker === "Unknown") {
+          console.debug("[transcript] unknown speaker, participantId:", participantId, "map:", { ...participantsRef.current }, "msg keys:", Object.keys(msg));
         }
 
+        const last = linesSnapshot.length > 0 ? linesSnapshot[linesSnapshot.length - 1] : null;
         if (isFinal) {
-          committedText = committedText ? committedText + " " + text : text;
-          linesSnapshot[currentLineIdx] = {
-            ...linesSnapshot[currentLineIdx],
-            text: committedText,
-            interim: false,
-          };
+          if (last && last.speaker === speaker && last.interim) {
+            // Replace interim with final
+            linesSnapshot[linesSnapshot.length - 1] = { ...last, text, interim: false };
+          } else if (last && last.speaker === speaker && !last.interim) {
+            // Same speaker — append to existing line (treat as one "turn")
+            linesSnapshot[linesSnapshot.length - 1] = { ...last, text: last.text + " " + text };
+          } else {
+            linesSnapshot.push({ id: nextLineId++, speaker, text });
+          }
         } else {
-          linesSnapshot[currentLineIdx] = {
-            ...linesSnapshot[currentLineIdx],
-            text: committedText ? committedText + " " + text : text,
-            interim: !committedText,
-          };
+          if (last && last.speaker === speaker && last.interim) {
+            linesSnapshot[linesSnapshot.length - 1] = { ...last, text };
+          } else {
+            linesSnapshot.push({ id: nextLineId++, speaker, text, interim: true });
+          }
         }
 
         queueFlush();
