@@ -78,24 +78,39 @@ export async function PATCH(
     if (Array.isArray(latencyMetrics)) updateData.latencyMetrics = latencyMetrics;
     if (typeof summary === "string") updateData.summary = summary;
 
+    // Classify inline (fast) so the response includes the outcome
+    let classificationData: Record<string, unknown> = {};
+    if (cleanLines && cleanLines.length >= 2) {
+      try {
+        const classification = await classifyTranscript(cleanLines);
+        classificationData = {
+          kpiScores: {
+            ...classification.scores,
+            turnAnnotations: classification.turnAnnotations,
+          } as unknown as Record<string, unknown>,
+          outcome: classification.outcome,
+        };
+      } catch (err) {
+        console.error("Inline classify error:", err);
+      }
+    }
+
     const conversation = await prisma.conversation.update({
       where: { id },
-      data: updateData,
+      data: { ...updateData, ...classificationData },
     });
 
-    // Classification + embedding run in the background so the
-    // response isn't blocked by OpenAI / Pinecone round-trips.
-    if (cleanLines && cleanLines.length >= 2) {
-      backgroundClassifyAndEmbed(id, cleanLines, existing).catch((err) =>
-        console.error("Background classify/embed error:", err),
+    // Embed new lines in the background (fire-and-forget)
+    if (cleanLines && cleanLines.length > 0 && process.env.PINECONE_API_KEY) {
+      const previousLines = Array.isArray(existing.lines)
+        ? (existing.lines as unknown[]).map(parseLine)
+        : null;
+      incrementalEmbed(id, cleanLines, previousLines).catch((err) =>
+        console.error("Incremental embed error:", err),
       );
     }
 
-    return NextResponse.json({
-      ...conversation,
-      kpiScores: conversation.kpiScores ?? existing.kpiScores,
-      outcome: conversation.outcome ?? existing.outcome,
-    });
+    return NextResponse.json(conversation);
   } catch (err) {
     console.error("PATCH /api/transcripts/[id] error:", err);
     return NextResponse.json(
@@ -105,61 +120,41 @@ export async function PATCH(
   }
 }
 
-async function backgroundClassifyAndEmbed(
+/**
+ * Embed only the new lines that haven't been embedded yet.
+ * Classification is done inline in the PATCH handler.
+ */
+async function incrementalEmbed(
   conversationId: string,
   allLines: { speaker: string; text: string }[],
-  existing: { lines: unknown },
+  previousLines: { speaker: string; text: string }[] | null,
 ) {
-  try {
-    const classification = await classifyTranscript(allLines);
-    await prisma.conversation.update({
-      where: { id: conversationId },
-      data: {
-        kpiScores: {
-          ...classification.scores,
-          turnAnnotations: classification.turnAnnotations,
-        } as unknown as Record<string, unknown>,
-        outcome: classification.outcome,
-      },
-    });
-  } catch (err) {
-    console.error("Background classify error:", err);
+  const startIdx = previousLines?.length ?? 0;
+  const newLines = allLines.slice(startIdx);
+  if (newLines.length === 0) return;
+
+  const embeddingPrefix = `conv-${conversationId}`;
+  const newTexts = newLines.map((l) => `${l.speaker}: ${l.text}`);
+  const embeddings = await embedBatch(newTexts);
+
+  const index = getIndex();
+  const records = embeddings.map((values, i) => ({
+    id: `${embeddingPrefix}-${startIdx + i}`,
+    values,
+    metadata: {
+      conversationId,
+      lineIndex: startIdx + i,
+      speaker: newLines[i].speaker,
+      text: newLines[i].text,
+    },
+  }));
+
+  for (let i = 0; i < records.length; i += 100) {
+    await index.upsert({ records: records.slice(i, i + 100) });
   }
 
-  if (!process.env.PINECONE_API_KEY) return;
-  try {
-    const previousLines = Array.isArray(existing.lines)
-      ? (existing.lines as unknown[]).map(parseLine)
-      : null;
-    const startIdx = previousLines?.length ?? 0;
-    const newLines = allLines.slice(startIdx);
-    if (newLines.length === 0) return;
-
-    const embeddingPrefix = `conv-${conversationId}`;
-    const newTexts = newLines.map((l) => `${l.speaker}: ${l.text}`);
-    const embeddings = await embedBatch(newTexts);
-
-    const index = getIndex();
-    const records = embeddings.map((values, i) => ({
-      id: `${embeddingPrefix}-${startIdx + i}`,
-      values,
-      metadata: {
-        conversationId,
-        lineIndex: startIdx + i,
-        speaker: newLines[i].speaker,
-        text: newLines[i].text,
-      },
-    }));
-
-    for (let i = 0; i < records.length; i += 100) {
-      await index.upsert({ records: records.slice(i, i + 100) });
-    }
-
-    await prisma.conversation.update({
-      where: { id: conversationId },
-      data: { embeddingId: embeddingPrefix },
-    });
-  } catch (err) {
-    console.error("Background embed error:", err);
-  }
+  await prisma.conversation.update({
+    where: { id: conversationId },
+    data: { embeddingId: embeddingPrefix },
+  });
 }
