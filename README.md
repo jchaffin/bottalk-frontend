@@ -20,6 +20,7 @@ Create `.env.local`:
 DAILY_API_KEY=
 OPENAI_API_KEY=
 PIPECAT_CLOUD_PUBLIC_API_KEY=
+PIPECAT_CLOUD_PRIVATE_API_KEY=  # required to reliably stop sessions (cleanup)
 PRISMA_DATABASE_URL=prisma+postgres://...   # Accelerate proxy
 POSTGRES_URL=postgres://...                  # Direct TCP (migrations)
 

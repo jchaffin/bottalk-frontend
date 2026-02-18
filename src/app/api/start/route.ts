@@ -6,6 +6,7 @@ import { DEFAULT_VOICE_1, DEFAULT_VOICE_2, DEFAULT_SCENARIO_SLUG, DEFAULT_TOPIC,
 const PCC_API = "https://api.pipecat.daily.co/v1/public";
 const PCC_API_KEY =
   process.env.PIPECAT_CLOUD_PUBLIC_API_KEY || process.env.PIPECAT_CLOUD_API_KEY;
+const PCC_PRIVATE_API_KEY = process.env.PIPECAT_CLOUD_PRIVATE_API_KEY;
 const DAILY_API_KEY = process.env.DAILY_API_KEY!;
 
 
@@ -141,20 +142,7 @@ async function cleanupAllActiveSessions(): Promise<void> {
   const allAgentSessionIds = sessions.flatMap((s) => s.agentSessions);
   const allRoomNames = sessions.map((s) => s.roomName);
 
-  if (PCC_API_KEY) {
-    await Promise.allSettled(
-      allAgentSessionIds.map((sessionId) =>
-        fetch(`${PCC_API}/${PCC_AGENT_NAME}/stop`, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${PCC_API_KEY}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ sessionId }),
-        }),
-      ),
-    );
-  }
+  await Promise.allSettled(allAgentSessionIds.map(stopPCCSession));
 
   await Promise.allSettled(allRoomNames.map(deleteDailyRoom));
 
@@ -185,6 +173,17 @@ async function startPCCSession(
 }
 
 async function stopPCCSession(sessionId: string): Promise<void> {
+  // Official API: Private stop endpoint
+  // DELETE /v1/agents/{agentName}/sessions/{sessionId} with a private key.
+  if (PCC_PRIVATE_API_KEY) {
+    await fetch(`https://api.pipecat.daily.co/v1/agents/${PCC_AGENT_NAME}/sessions/${sessionId}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${PCC_PRIVATE_API_KEY}` },
+    }).catch(() => {});
+    return;
+  }
+
+  // Fallback (legacy/undocumented): best-effort stop via public API if available.
   if (!PCC_API_KEY) return;
   await fetch(`${PCC_API}/${PCC_AGENT_NAME}/stop`, {
     method: "POST",
@@ -193,7 +192,7 @@ async function stopPCCSession(sessionId: string): Promise<void> {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ sessionId }),
-  }).catch(() => {}); // best-effort
+  }).catch(() => {});
 }
 
 // --- Route handler ---
