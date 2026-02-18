@@ -18,6 +18,13 @@ export interface TranscriptLine {
   speaker: string;
   text: string;
   interim?: boolean;
+  /** Per-turn latency metrics attached when this line came from a WS turn event. */
+  metrics?: {
+    ttfb?: number;
+    llm?: number;
+    tts?: number;
+    e2e?: number;
+  };
 }
 
 export interface AgentPrompt {
@@ -68,6 +75,20 @@ export async function startConversation(options: StartOptions): Promise<StartRes
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(options),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `API error ${res.status}`);
+  }
+  return res.json();
+}
+
+/** Quick-start a call using the baked-in Sarah & Mike defaults — no prompts needed. */
+export async function startQuickCall(): Promise<StartResponse> {
+  const res = await fetch(`${AGENT_API}/api/start`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -142,12 +163,20 @@ export interface SavedConversation {
   title: string;
   agentNames: string[];
   lines: { speaker: string; text: string }[];
+  roomUrl?: string | null;
+  latencyMetrics?: any[] | null;
   createdAt: string;
 }
 
 /** Save a conversation transcript. */
 export async function saveTranscript(
-  data: { title: string; agentNames: string[]; lines: { speaker: string; text: string }[] },
+  data: {
+    title: string;
+    agentNames: string[];
+    lines: { speaker: string; text: string }[];
+    roomUrl?: string;
+    latencyMetrics?: any[];
+  },
 ): Promise<SavedConversation> {
   const res = await fetch(`${NEXT_API}/api/transcripts`, {
     method: "POST",

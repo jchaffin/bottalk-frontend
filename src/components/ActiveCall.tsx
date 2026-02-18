@@ -2,6 +2,7 @@
 
 import { Loader2 } from "lucide-react";
 import CallProvider from "./CallProvider";
+import type { TurnMetric } from "./CallProvider";
 
 interface ActiveCallProps {
   roomUrl: string | null;
@@ -11,6 +12,7 @@ interface ActiveCallProps {
   scenarioLabel: string | null;
   starting?: boolean;
   onTranscript: (lines: { speaker: string; text: string }[]) => void;
+  onMetrics?: (metrics: TurnMetric[]) => void;
   onLeave: () => void;
   onStop: () => void;
 }
@@ -24,6 +26,7 @@ export default function ActiveCall({
   scenarioLabel,
   starting,
   onTranscript,
+  onMetrics,
   onLeave,
   onStop,
 }: ActiveCallProps) {
@@ -43,7 +46,9 @@ export default function ActiveCall({
             token={token}
             agentNames={agentNames}
             agentColors={agentColors}
+            title={scenarioLabel ?? undefined}
             onTranscript={onTranscript}
+            onMetrics={onMetrics}
             onLeave={onLeave}
           />
         </div>

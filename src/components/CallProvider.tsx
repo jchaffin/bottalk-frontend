@@ -1,10 +1,22 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { ExternalLink, Volume2, VolumeX } from "lucide-react";
 import AgentAvatar from "./AgentAvatar";
 import Transcript from "./Transcript";
 import type { TranscriptLine } from "@/lib/api";
-import { DEFAULT_AGENT_COLORS, APP_MESSAGE_LABEL } from "@/lib/config";
+import { DEFAULT_AGENT_COLORS } from "@/lib/config";
+
+/** A single latency metric event collected during the call. */
+export interface TurnMetric {
+  agent: string;
+  turn?: number;
+  ttfb?: number;
+  llm?: number;
+  tts?: number;
+  e2e?: number;
+  ts?: number;
+}
 
 /**
  * Props for the CallProvider component.
@@ -15,6 +27,7 @@ import { DEFAULT_AGENT_COLORS, APP_MESSAGE_LABEL } from "@/lib/config";
  *                         transcript attribution. Order determines colour assignment.
  * @property agentColors - Hex color strings for each agent avatar.
  * @property onTranscript - Fired once when the call ends, with the full transcript.
+ * @property onMetrics    - Fired once when the call ends, with collected latency metrics.
  * @property onLeave      - Fired after the local participant has left the meeting.
  */
 interface CallProviderProps {
@@ -22,7 +35,10 @@ interface CallProviderProps {
   token: string;
   agentNames: [string, string];
   agentColors?: [string, string];
+  /** Title for the conversation record (used when auto-saving). */
+  title?: string;
   onTranscript?: (lines: { speaker: string; text: string }[]) => void;
+  onMetrics?: (metrics: TurnMetric[]) => void;
   onLeave?: () => void;
 }
 
@@ -37,10 +53,10 @@ interface CallProviderProps {
  *     a call is actually started.
  *  2. Creates a Daily call-object (audio-only, auto-subscribe) and attaches
  *     event listeners for participant lifecycle, audio tracks, and app-messages.
- *  3. Transcript data arrives via Daily's "app-message" event as incremental
- *     LLM text chunks (RTVI protocol). Chunks are accumulated into
- *     `linesSnapshot` and flushed to React state once per animation frame via
- *     `queueFlush` to avoid excessive re-renders.
+ *  3. Transcript data arrives via Daily's "transcription-message" event
+ *     (room-level Deepgram). Final and interim transcriptions are accumulated
+ *     into `linesSnapshot` and flushed to React state once per animation
+ *     frame via `queueFlush` to avoid excessive re-renders.
  *  4. On unmount (or when roomUrl/token change), the effect's cleanup tears
  *     down the call object gracefully.
  */
@@ -49,16 +65,21 @@ export default function CallProvider({
   token,
   agentNames,
   agentColors = DEFAULT_AGENT_COLORS,
+  title,
   onTranscript,
+  onMetrics,
   onLeave,
 }: CallProviderProps) {
   // ── React state ──────────────────────────────────────────────────────
-  /** Human-readable connection status shown at the bottom of the UI. */
   const [status, setStatus] = useState("Connecting...");
-  /** Transcript lines currently rendered in the Transcript component. */
   const [lines, setLines] = useState<TranscriptLine[]>([]);
-  /** Map of agent name → whether that agent's audio track is currently playable. */
   const [speakingMap, setSpeakingMap] = useState<Record<string, boolean>>({});
+  const [liveMetrics, setLiveMetrics] = useState<TurnMetric[]>([]);
+  const [muted, setMuted] = useState(false);
+  /** Live summary generated during the call. */
+  const [liveSummary, setLiveSummary] = useState<string | null>(null);
+  /** Live KPI outcome from incremental classification. */
+  const [liveOutcome, setLiveOutcome] = useState<string | null>(null);
 
   // ── Refs ──────────────────────────────────────────────────────────────
   /** Hidden DOM node that hosts dynamically-created <audio> elements. */
@@ -80,16 +101,118 @@ export default function CallProvider({
    */
   const onTranscriptRef = useRef(onTranscript);
   onTranscriptRef.current = onTranscript;
+  const onMetricsRef = useRef(onMetrics);
+  onMetricsRef.current = onMetrics;
   const onLeaveRef = useRef(onLeave);
   onLeaveRef.current = onLeave;
+  const mutedRef = useRef(muted);
+  mutedRef.current = muted;
+  const titleRef = useRef(title);
+  titleRef.current = title;
 
-  /**
-   * Set of known agent names, rebuilt on each render so that
-   * participant-updated handlers can cheaply check whether a participant
-   * is one of our agents.
-   */
+  /** ID of the conversation record created in the DB. */
+  const conversationIdRef = useRef<string | null>(null);
+  /** Number of lines already saved/synced to the server. */
+  const savedLineCountRef = useRef(0);
+  /** Debounce timer for incremental save. */
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Number of turns since the last summary refresh. */
+  const turnsSinceLastSummaryRef = useRef(0);
+
   const agentNameSet = useRef(new Set(agentNames));
   agentNameSet.current = new Set(agentNames);
+
+  // ── Sync muted state to all <audio> elements ────────────────────────
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    el.querySelectorAll("audio").forEach((a) => { a.muted = muted; });
+  }, [muted]);
+
+  // ── Real-time save / embed / classify / summarize ────────────────────
+
+  /**
+   * Called after each new turn. Creates the conversation record on the
+   * first call, then incrementally updates it (triggering server-side
+   * embed + classify). Fetches a fresh summary every 3 turns.
+   */
+  function scheduleIncrementalSave(
+    currentLines: { speaker: string; text: string }[],
+    currentMetrics: TurnMetric[],
+  ) {
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+
+    // Debounce slightly so rapid-fire metric patches don't spam the server
+    saveTimerRef.current = setTimeout(async () => {
+      try {
+        if (currentLines.length === 0) return;
+
+        if (!conversationIdRef.current) {
+          // First save: create the record
+          const res = await fetch("/api/transcripts", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              title: titleRef.current || `${agentNames[0]} & ${agentNames[1]}`,
+              agentNames: [...agentNames],
+              lines: currentLines,
+              roomUrl,
+              latencyMetrics: currentMetrics,
+            }),
+          });
+          if (res.ok) {
+            const data = await res.json();
+            conversationIdRef.current = data.id;
+            savedLineCountRef.current = currentLines.length;
+            console.debug("[CallProvider] Created conversation:", data.id);
+          }
+        } else {
+          // Incremental update: PATCH with full lines (server diffs for embeddings)
+          const res = await fetch(`/api/transcripts/${conversationIdRef.current}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              lines: currentLines,
+              latencyMetrics: currentMetrics,
+            }),
+          });
+          if (res.ok) {
+            const data = await res.json();
+            savedLineCountRef.current = currentLines.length;
+            // Pick up outcome from incremental classification
+            if (data.outcome) setLiveOutcome(data.outcome);
+          }
+        }
+
+        // Fetch a live summary every 3 turns
+        turnsSinceLastSummaryRef.current++;
+        if (turnsSinceLastSummaryRef.current >= 3) {
+          turnsSinceLastSummaryRef.current = 0;
+          const sumRes = await fetch("/api/transcripts/summarize", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ lines: currentLines }),
+          });
+          if (sumRes.ok) {
+            const { summary } = await sumRes.json();
+            if (summary) {
+              setLiveSummary(summary);
+              // Persist summary to the conversation record
+              if (conversationIdRef.current) {
+                fetch(`/api/transcripts/${conversationIdRef.current}`, {
+                  method: "PATCH",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ summary }),
+                }).catch(() => {});
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.error("[CallProvider] Incremental save error:", err);
+      }
+    }, 500);
+  }
 
   // ── Main effect: Daily call lifecycle ─────────────────────────────────
   useEffect(() => {
@@ -135,6 +258,7 @@ export default function CallProvider({
         // First time seeing this participant's audio — create a new element.
         const el = document.createElement("audio");
         el.autoplay = true;
+        el.muted = mutedRef.current;
         el.srcObject = new MediaStream([track]);
         containerRef.current?.appendChild(el);
         audioEls[sid] = el;
@@ -159,20 +283,38 @@ export default function CallProvider({
       call.on("joined-meeting", () => {
         const all = call.participants();
         for (const [k, p] of Object.entries(all)) {
-          if (k === "local") continue; // skip ourselves
-          if (p.user_name) participantsRef.current[p.session_id] = p.user_name;
+          if (k === "local") continue;
+          if (p.user_name) {
+            participantsRef.current[p.session_id] = p.user_name;
+            if ((p as any).user_id) participantsRef.current[(p as any).user_id] = p.user_name;
+          }
         }
+        console.debug("[CallProvider] joined, participants:", { ...participantsRef.current });
         setStatus("Listening...");
       });
 
+      call.on("transcription-started", (ev: any) => {
+        console.debug("[CallProvider] transcription-started", ev);
+      });
+
+      call.on("transcription-error", (ev: any) => {
+        console.error("[CallProvider] transcription-error", ev);
+      });
+
+      // app-message events are high-frequency (RTVI frames, metrics, etc.)
+      // — no handler needed; transcription comes via "transcription-message".
+
       /**
        * "participant-joined" — a new remote participant enters the room.
-       * Record their session_id → name mapping for later attribution.
+       * Record their session_id and user_id → name mappings.
        */
       call.on("participant-joined", (ev) => {
         if (!ev) return;
-        if (ev.participant.user_name)
+        if (ev.participant.user_name) {
           participantsRef.current[ev.participant.session_id] = ev.participant.user_name;
+          if ((ev.participant as any).user_id)
+            participantsRef.current[(ev.participant as any).user_id] = ev.participant.user_name;
+        }
       });
 
       // ── Speaking-indicator tracking ─────────────────────────────────
@@ -217,97 +359,177 @@ export default function CallProvider({
         delete participantsRef.current[ev.participant.session_id];
       });
 
-      // ── Transcript accumulation (RTVI app-messages) ─────────────────
-      // The pipecat agents send LLM output as incremental "app-message"
-      // events with types: bot-llm-started, bot-llm-text, bot-llm-stopped.
-      //
-      // We accumulate text chunks into `linesSnapshot` (a plain array
-      // outside React state) and batch-flush to React via `queueFlush`.
-
-      /** Maximum number of transcript lines kept in the rendered list. */
+      // ── Transcript accumulation ─────────────────────────────────────────
       const MAX_VISIBLE = 200;
-      /**
-       * Maps a Daily session_id (fromId) to the index in `linesSnapshot`
-       * where that participant's currently-active line lives. Reset on
-       * bot-llm-started / bot-llm-stopped so the next chunk starts a
-       * new line (or merges with an adjacent same-speaker line).
-       */
-      const activeLine: Record<string, number> = {};
-      /** The authoritative transcript array; flushed to React state in batches. */
       let linesSnapshot: TranscriptLine[] = [];
-      /** Auto-incrementing unique key for React list rendering. */
       let nextLineId = 0;
       let flushQueued = false;
 
-      // Batches transcript state updates into a single render per animation frame.
-      // Without this, every incremental "bot-llm-text" chunk would trigger a
-      // separate React re-render. Instead, we set a flag and schedule a
-      // requestAnimationFrame callback that commits the latest linesSnapshot
-      // (trimmed to MAX_VISIBLE) in one go. The flag prevents redundant rAF
-      // calls if multiple chunks arrive within the same frame.
       function queueFlush() {
-        if (flushQueued) return; // already scheduled — skip
+        if (flushQueued) return;
         flushQueued = true;
         requestAnimationFrame(() => {
           flushQueued = false;
-          // Commit only the most recent MAX_VISIBLE lines to React state
           setLines(linesSnapshot.slice(-MAX_VISIBLE));
         });
       }
 
-      /**
-       * "app-message" — the main transcript ingestion handler.
-       *
-       * Message flow per LLM turn:
-       *   bot-llm-started  → reset the active line for this sender
-       *   bot-llm-text (×N) → append text to the current line (or create one)
-       *   bot-llm-stopped  → finalise the active line for this sender
-       *
-       * Text chunks are appended to `linesSnapshot` using three strategies:
-       *   1. If we already have an activeLine index for this sender, append there.
-       *   2. Else if the last line in the snapshot is from the same speaker,
-       *      treat it as a continuation (handles back-to-back chunks).
-       *   3. Otherwise, push a brand-new line.
-       */
-      call.on("app-message", (ev) => {
-        // Ignore messages that aren't tagged with our RTVI label.
-        if (!ev?.data?.label || ev.data.label !== APP_MESSAGE_LABEL) return;
-        const msg = ev.data;
-        const fromId = ev.fromId;
-        const speaker = participantsRef.current[fromId] || "Unknown";
+      // ── WebSocket transcript relay (dev mode) ─────────────────────────
+      // In local dev the agent API server relays pipeline-internal turn
+      // events over a WebSocket.  This delivers complete LLM output text
+      // whereas Daily's transcription-message is Deepgram STT of the
+      // TTS audio.  When the WS relay is delivering data, we prefer it.
+      // The Daily handler is always active as a fallback.
 
-        // --- bot-llm-started: new LLM turn begins ---
-        if (msg.type === "bot-llm-started") {
-          delete activeLine[fromId];
+      let wsDeliveredData = false;
+      let ws: WebSocket | null = null;
+      const agentApiUrl = process.env.NEXT_PUBLIC_API_URL;
+
+      // Per-turn latency metrics collected from WS events
+      const metricsSnapshot: TurnMetric[] = [];
+      // Accumulate per-agent partial metrics until a "turn" event finalises them
+      const pendingMetrics: Record<string, Partial<TurnMetric>> = {};
+
+      if (agentApiUrl) {
+        const wsProto = agentApiUrl.startsWith("https") ? "wss" : "ws";
+        const wsHost = agentApiUrl.replace(/^https?:\/\//, "");
+        const wsEndpoint = `${wsProto}://${wsHost}/ws`;
+
+        ws = new WebSocket(wsEndpoint);
+
+        ws.onopen = () => {
+          console.debug("[CallProvider] WebSocket transcript relay connected");
+        };
+
+        ws.onmessage = (evt) => {
+          try {
+            const data = JSON.parse(evt.data);
+            const agent: string = data.agent || "Unknown";
+
+            /** Update the pending bucket and, if the turn line already
+             *  exists, patch its metrics + the metricsSnapshot entry. */
+            function applyMetric(key: keyof TurnMetric, ms: number) {
+              if (!pendingMetrics[agent]) pendingMetrics[agent] = { agent };
+              (pendingMetrics[agent] as any)[key] = ms;
+
+              // Late-arriving metric: patch the last committed line for this agent
+              const lastLine = [...linesSnapshot].reverse().find((l) => l.speaker === agent);
+              if (lastLine?.metrics) {
+                (lastLine.metrics as any)[key] = ms;
+                queueFlush();
+              }
+              // Also patch the metricsSnapshot entry
+              const lastMetric = [...metricsSnapshot].reverse().find((m) => m.agent === agent);
+              if (lastMetric) {
+                (lastMetric as any)[key] = ms;
+                setLiveMetrics([...metricsSnapshot]);
+              }
+            }
+
+            if (data.type === "ttfb") {
+              const val = data.value ?? 0;
+              if (val <= 0) return;
+              applyMetric("ttfb", Math.round(val * 1000));
+            } else if (data.type === "processing") {
+              const val = data.value ?? 0;
+              if (val <= 0) return;
+              const processor = (data.processor || "").toLowerCase();
+              const ms = Math.round(val * 1000);
+              if (processor.includes("tts") || processor.includes("elevenlabs") || processor.includes("cartesia")) {
+                applyMetric("tts", ms);
+              } else {
+                applyMetric("llm", ms);
+              }
+            } else if (data.type === "e2e") {
+              const val = data.value ?? 0;
+              if (val <= 0) return;
+              applyMetric("e2e", Math.round(val * 1000));
+            } else if (data.type === "turn") {
+              const speaker = agent;
+              const text = data.output || "";
+
+              // Finalise the metrics record for this turn
+              const pending = pendingMetrics[agent] || { agent };
+              if (data.e2e != null && !pending.e2e) {
+                pending.e2e = Math.round((data.e2e ?? 0) * 1000);
+              }
+              const metric: TurnMetric = {
+                ...pending,
+                agent,
+                turn: data.turn ?? metricsSnapshot.filter((m) => m.agent === agent).length + 1,
+                ts: data.ts,
+              };
+              metricsSnapshot.push(metric);
+              setLiveMetrics([...metricsSnapshot]);
+              delete pendingMetrics[agent];
+
+              // Transcript line with per-turn latency attached
+              if (!text) return;
+              wsDeliveredData = true;
+              linesSnapshot.push({
+                id: nextLineId++,
+                speaker,
+                text,
+                metrics: {
+                  ttfb: metric.ttfb,
+                  llm: metric.llm,
+                  tts: metric.tts,
+                  e2e: metric.e2e,
+                },
+              });
+              queueFlush();
+
+              // Real-time save / embed / classify / summarize
+              const cleanLines = linesSnapshot
+                .filter((l) => !l.interim)
+                .map((l) => ({ speaker: l.speaker, text: l.text }));
+              scheduleIncrementalSave(cleanLines, [...metricsSnapshot]);
+            }
+          } catch { /* ignore malformed frames */ }
+        };
+
+        ws.onclose = () => {
+          console.debug("[CallProvider] WebSocket transcript relay disconnected");
+        };
+        ws.onerror = () => {};
+
+        // Stash for cleanup
+        (containerRef as any)._ws = ws;
+      }
+
+      // ── Daily transcription (room-level Deepgram) ──────────────────────
+      // Daily broadcasts transcription-message events to all participants.
+      // If the WS relay has already delivered data, skip to avoid
+      // duplicates.  Otherwise this is the primary transcript source.
+      call.on("transcription-message", (msg: any) => {
+        if (wsDeliveredData) return; // WS relay is active — skip
+        if (!msg) return;
+        const text = msg.text;
+        if (!text) return;
+        const isFinal = msg.rawResponse?.is_final ?? true;
+        const sid = msg.participantId || msg.session_id || "";
+        const speaker = participantsRef.current[sid] || "Unknown";
+        if (speaker === "Unknown") {
+          console.debug("[transcript] unknown speaker, sid:", sid, "map:", { ...participantsRef.current }, "msg keys:", Object.keys(msg));
         }
 
-        // --- bot-llm-text: incremental token/chunk ---
-        if (msg.type === "bot-llm-text" && msg.data?.text) {
-          const text = msg.data.text;
-          const idx = activeLine[fromId];
+        const last = linesSnapshot.length > 0 ? linesSnapshot[linesSnapshot.length - 1] : null;
 
-          if (idx !== undefined && idx < linesSnapshot.length && linesSnapshot[idx].speaker === speaker) {
-            // Strategy 1: append to the tracked active line for this sender.
-            linesSnapshot[idx] = { ...linesSnapshot[idx], text: linesSnapshot[idx].text + text };
-          } else if (linesSnapshot.length > 0 && linesSnapshot[linesSnapshot.length - 1].speaker === speaker) {
-            // Strategy 2: last line is the same speaker — merge into it.
-            const last = linesSnapshot.length - 1;
-            activeLine[fromId] = last;
-            linesSnapshot[last] = { ...linesSnapshot[last], text: linesSnapshot[last].text + text };
+        if (isFinal) {
+          if (last && last.speaker === speaker && last.interim) {
+            linesSnapshot[linesSnapshot.length - 1] = { ...last, text, interim: false };
           } else {
-            // Strategy 3: new speaker turn — push a fresh line.
-            const id = nextLineId++;
-            activeLine[fromId] = linesSnapshot.length;
-            linesSnapshot.push({ id, speaker, text });
+            linesSnapshot.push({ id: nextLineId++, speaker, text });
           }
-
-          queueFlush();
+        } else {
+          if (last && last.speaker === speaker && last.interim) {
+            linesSnapshot[linesSnapshot.length - 1] = { ...last, text };
+          } else {
+            linesSnapshot.push({ id: nextLineId++, speaker, text, interim: true });
+          }
         }
 
-        // --- bot-llm-stopped: LLM turn complete ---
-        if (msg.type === "bot-llm-stopped") {
-          delete activeLine[fromId];
-        }
+        queueFlush();
       });
 
       // ── Track lifecycle events ──────────────────────────────────────
@@ -334,9 +556,20 @@ export default function CallProvider({
       call.on("left-meeting", () => {
         setStatus("Disconnected");
         Object.keys(audioEls).forEach(cleanupAudio);
-        // Strip internal `id` field before handing transcript to parent.
-        const toSave = linesSnapshot.map((l) => ({ speaker: l.speaker, text: l.text }));
+        const toSave = linesSnapshot
+          .filter((l) => !l.interim)
+          .map((l) => ({ speaker: l.speaker, text: l.text }));
+
+        // Final incremental save (forces summary + embed)
+        if (toSave.length > savedLineCountRef.current) {
+          turnsSinceLastSummaryRef.current = 99; // force summary on final save
+          scheduleIncrementalSave(toSave, [...metricsSnapshot]);
+        }
+
         onTranscriptRef.current?.(toSave);
+        if (metricsSnapshot.length > 0) {
+          onMetricsRef.current?.(metricsSnapshot);
+        }
         onLeaveRef.current?.();
       });
 
@@ -344,6 +577,26 @@ export default function CallProvider({
       call.join({ url: roomUrl, token })
         .then(() => {
           setStatus("Connected - listening to the conversation");
+          // Ensure the browser receives transcription events.  The agent
+          // (goes_first) normally starts Deepgram transcription, but
+          // calling startTranscription from the browser side as well
+          // guarantees the local call object is subscribed.  Settings
+          // must match the agent's config to avoid restarting with
+          // different params.  If transcription is already running
+          // Daily throws a harmless error we catch below.
+          try {
+            call.startTranscription({
+              model: "nova-2-general",
+              includeRawResponse: true,
+              extra: { interim_results: true },
+            });
+            console.debug("[CallProvider] startTranscription succeeded");
+          } catch (err: any) {
+            console.debug(
+              "[CallProvider] startTranscription (expected if already active):",
+              err?.message || err,
+            );
+          }
         })
         .catch((err) => setStatus(`Error: ${err.message}`));
     });
@@ -351,16 +604,37 @@ export default function CallProvider({
     // ── Cleanup on unmount or dependency change ─────────────────────────
     return () => {
       destroyedRef.current = true;
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      // Close WebSocket relay if open
+      const ws = (containerRef as any)._ws;
+      if (ws) {
+        (containerRef as any)._ws = null;
+        ws.close();
+      }
+      // Tear down Daily call
       const call = (containerRef as any)._call;
       if (call) {
         (containerRef as any)._call = null;
-        // leave() is async; destroy() runs regardless of success/failure.
         call.leave().then(() => call.destroy()).catch(() => call.destroy());
       }
     };
     // Only re-run when the room or token change — callback refs are stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomUrl, token]);
+
+  // ── Derived live latency data ────────────────────────────────────────
+  // Show only the latest turn per agent (not averages)
+  const latestByAgent: Record<string, TurnMetric> = {};
+  for (const m of liveMetrics) {
+    latestByAgent[m.agent] = m; // last one wins
+  }
+  const uniqueAgents = Object.keys(latestByAgent);
+
+  function latencyColor(ms: number): string {
+    if (ms < 500) return "text-emerald-400";
+    if (ms < 1000) return "text-amber-400";
+    return "text-red-400";
+  }
 
   // ── Render ──────────────────────────────────────────────────────────
   return (
@@ -380,6 +654,101 @@ export default function CallProvider({
           />
         ))}
       </div>
+
+      {/* Room link + mute toggle */}
+      <div className="flex items-center gap-3">
+        <a
+          href={roomUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={() => setMuted(true)}
+          className="inline-flex items-center gap-1 text-xs text-accent hover:text-accent-hover transition-colors"
+        >
+          Daily Room <ExternalLink className="w-3 h-3" />
+        </a>
+        <button
+          onClick={() => setMuted((m) => !m)}
+          className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-lg border transition-colors ${
+            muted
+              ? "text-amber-400 border-amber-400/30 bg-amber-400/10 hover:bg-amber-400/20"
+              : "text-muted border-border hover:bg-surface-elevated"
+          }`}
+          title={muted ? "Unmute app audio" : "Mute app audio (use Daily Room tab instead)"}
+        >
+          {muted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
+          {muted ? "Muted" : "Audio On"}
+        </button>
+      </div>
+
+      {/* Live latency stats */}
+      {liveMetrics.length > 0 && (
+        <div className="w-full rounded-xl bg-surface-elevated border border-border p-4 space-y-3">
+          <h3 className="text-[11px] font-semibold uppercase tracking-wider text-muted">
+            Live Latency
+          </h3>
+          <div className="space-y-2">
+            {uniqueAgents.map((agent) => {
+              const m = latestByAgent[agent];
+              const turnCount = liveMetrics.filter((t) => t.agent === agent).length;
+              return (
+                <div key={agent} className="flex items-center gap-4 text-xs">
+                  <span className="font-semibold text-foreground w-16 shrink-0 truncate">{agent}</span>
+                  <div className="flex gap-4">
+                    {m.ttfb != null && (
+                      <div className="flex flex-col items-center">
+                        <span className="text-[9px] uppercase tracking-wider text-muted">TTFB</span>
+                        <span className={`font-mono font-medium ${latencyColor(m.ttfb)}`}>{m.ttfb}ms</span>
+                      </div>
+                    )}
+                    {m.llm != null && (
+                      <div className="flex flex-col items-center">
+                        <span className="text-[9px] uppercase tracking-wider text-muted">LLM</span>
+                        <span className={`font-mono font-medium ${latencyColor(m.llm)}`}>{m.llm}ms</span>
+                      </div>
+                    )}
+                    {m.tts != null && (
+                      <div className="flex flex-col items-center">
+                        <span className="text-[9px] uppercase tracking-wider text-muted">TTS</span>
+                        <span className={`font-mono font-medium ${latencyColor(m.tts)}`}>{m.tts}ms</span>
+                      </div>
+                    )}
+                    {m.e2e != null && (
+                      <div className="flex flex-col items-center">
+                        <span className="text-[9px] uppercase tracking-wider text-muted">E2E</span>
+                        <span className={`font-mono font-medium ${latencyColor(m.e2e)}`}>{m.e2e}ms</span>
+                      </div>
+                    )}
+                  </div>
+                  <span className="text-[10px] text-muted ml-auto">turn {m.turn ?? turnCount}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Live summary */}
+      {liveSummary && (
+        <div className="w-full rounded-xl bg-surface-elevated border border-border p-4 space-y-2">
+          <div className="flex items-center gap-2">
+            <h3 className="text-[11px] font-semibold uppercase tracking-wider text-muted">
+              Live Summary
+            </h3>
+            {liveOutcome && (
+              <span className={`text-[10px] font-medium px-2 py-0.5 rounded-md border border-border ${
+                liveOutcome === "excellent" || liveOutcome === "good"
+                  ? "text-emerald-400 bg-emerald-400/10"
+                  : liveOutcome === "average"
+                    ? "text-amber-400 bg-amber-400/10"
+                    : "text-red-400 bg-red-400/10"
+              }`}>
+                {liveOutcome.replace("_", " ")}
+              </span>
+            )}
+          </div>
+          <p className="text-sm text-foreground/80 leading-relaxed">{liveSummary}</p>
+        </div>
+      )}
 
       {/* Live transcript feed */}
       <Transcript lines={lines} agentNames={agentNames} />

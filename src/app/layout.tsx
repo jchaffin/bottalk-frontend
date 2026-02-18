@@ -4,7 +4,7 @@ import localFont from "next/font/local";
 import { Schibsted_Grotesk } from "next/font/google";
 import "./globals.css";
 import ThemeToggle from "@/components/ThemeToggle";
-import { History } from "lucide-react";
+import { LayoutDashboard, MessageSquare, Radio, Phone } from "lucide-react";
 
 const duran = localFont({
   src: [
@@ -24,11 +24,10 @@ const schibstedGrotesk = Schibsted_Grotesk({
 });
 
 export const metadata: Metadata = {
-  title: "OutRival Technical Project",
-  description: "Watch two AI voice agents have a real-time conversation",
+  title: "OutRival Dashboard",
+  description: "Agent performance metrics, latency tracking, and KPI outcomes",
 };
 
-// Inline script to apply theme before first paint (prevents flash)
 const themeScript = `
 (function(){
   try {
@@ -52,18 +51,79 @@ export default function RootLayout({
       <body
         className={`${duran.variable} ${schibstedGrotesk.variable} antialiased bg-background text-foreground min-h-screen`}
       >
-        <div className="fixed top-4 right-4 z-50 flex items-center gap-2">
-          <Link
-            href="/transcripts"
-            aria-label="Conversation history"
-            title="Conversation history"
-            className="w-9 h-9 rounded-xl bg-surface border border-border flex items-center justify-center text-muted hover:text-foreground hover:border-foreground/20 transition-all"
-          >
-            <History className="w-4 h-4" />
-          </Link>
-          <ThemeToggle />
-        </div>
-        {children}
+        {/* Top navigation bar */}
+        <header className="sticky top-0 z-50 border-b border-border bg-background/80 backdrop-blur-lg">
+          <div className="max-w-7xl mx-auto px-6 h-14 flex items-center justify-between">
+            <div className="flex items-center gap-6">
+              <Link
+                href="/"
+                className="text-lg font-bold tracking-tight text-foreground"
+                style={{ fontFamily: "var(--font-display), Duran, sans-serif" }}
+              >
+                OutRival
+              </Link>
+              <nav className="hidden sm:flex items-center gap-1">
+                <Link
+                  href="/"
+                  className="text-xs font-medium text-muted hover:text-foreground px-3 py-1.5 rounded-lg hover:bg-surface-elevated transition-all flex items-center gap-1.5"
+                >
+                  <LayoutDashboard className="w-3.5 h-3.5" />
+                  Dashboard
+                </Link>
+                <Link
+                  href="/transcripts"
+                  className="text-xs font-medium text-muted hover:text-foreground px-3 py-1.5 rounded-lg hover:bg-surface-elevated transition-all flex items-center gap-1.5"
+                >
+                  <MessageSquare className="w-3.5 h-3.5" />
+                  Transcripts
+                </Link>
+                <Link
+                  href="/sessions"
+                  className="text-xs font-medium text-muted hover:text-foreground px-3 py-1.5 rounded-lg hover:bg-surface-elevated transition-all flex items-center gap-1.5"
+                >
+                  <Radio className="w-3.5 h-3.5" />
+                  Sessions
+                </Link>
+                <Link
+                  href="/call"
+                  className="text-xs font-medium text-white bg-accent hover:bg-accent-hover px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5"
+                >
+                  <Phone className="w-3.5 h-3.5" />
+                  Start Call
+                </Link>
+              </nav>
+            </div>
+            <div className="flex items-center gap-2">
+              <a
+                href="https://console.pipecat.daily.co"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="hidden sm:flex items-center gap-1.5 text-[10px] text-muted bg-surface-elevated px-2.5 py-1 rounded-lg border border-border hover:bg-border/50 transition-colors cursor-pointer"
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />
+                PCC Connected
+              </a>
+              <ThemeToggle />
+            </div>
+          </div>
+        </header>
+
+        {/* Main content */}
+        <main className="max-w-7xl mx-auto px-6 py-8">
+          {children}
+        </main>
+
+        {/* Footer */}
+        <footer className="border-t border-border/50 mt-12">
+          <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
+            <p className="text-[10px] text-muted/40">
+              &copy; {new Date().getFullYear()} Jacob Chaffin &middot; OutRival
+            </p>
+            <p className="text-[10px] text-muted/40">
+              Powered by Pipecat Cloud + Pinecone
+            </p>
+          </div>
+        </footer>
       </body>
     </html>
   );

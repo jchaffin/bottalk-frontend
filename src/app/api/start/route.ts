@@ -41,7 +41,10 @@ async function getDailyToken(roomName: string, isOwner = false): Promise<string>
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      properties: { room_name: roomName, is_owner: isOwner },
+      properties: {
+        room_name: roomName,
+        ...(isOwner ? { is_owner: true } : {}),
+      },
     }),
   });
   if (!res.ok) throw new Error(`Daily token creation failed: ${res.status}`);
@@ -93,30 +96,32 @@ export async function POST(request: NextRequest) {
 
       const scenario = await prisma.scenario.findUnique({
         where: { slug: scenarioSlug },
-      });
+      }).catch(() => null);
 
-      if (!scenario) {
-        return NextResponse.json(
-          { detail: `Unknown scenario: ${scenarioSlug}` },
-          { status: 400 },
-        );
+      if (scenario) {
+        const scenarioAgents = scenario.agents as any[];
+        const a1 = scenarioAgents[0];
+        const a2 = scenarioAgents[1];
+        agents = [
+          {
+            name: a1.name,
+            prompt: a1.prompt.replace(/\{\{topic\}\}/g, topic),
+            voice_id: a1.voice_id || DEFAULT_VOICE_1,
+          },
+          {
+            name: a2.name,
+            prompt: a2.prompt.replace(/\{\{topic\}\}/g, topic),
+            voice_id: a2.voice_id || DEFAULT_VOICE_2,
+          },
+        ];
+      } else {
+        // No prompts and no DB scenario — use name-only agents.
+        // The PCC bot has baked-in defaults for Sarah & Mike.
+        agents = [
+          { name: "Sarah", prompt: "", voice_id: DEFAULT_VOICE_1 },
+          { name: "Mike", prompt: "", voice_id: DEFAULT_VOICE_2 },
+        ];
       }
-
-      const scenarioAgents = scenario.agents as any[];
-      const a1 = scenarioAgents[0];
-      const a2 = scenarioAgents[1];
-      agents = [
-        {
-          name: a1.name,
-          prompt: a1.prompt.replace(/\{\{topic\}\}/g, topic),
-          voice_id: a1.voice_id || DEFAULT_VOICE_1,
-        },
-        {
-          name: a2.name,
-          prompt: a2.prompt.replace(/\{\{topic\}\}/g, topic),
-          voice_id: a2.voice_id || DEFAULT_VOICE_2,
-        },
-      ];
     }
 
     const agent1 = agents[0];
@@ -137,17 +142,18 @@ export async function POST(request: NextRequest) {
     const [token1, token2, browserToken] = await Promise.all([
       getDailyToken(room.name, true),
       getDailyToken(room.name),
-      getDailyToken(room.name),
+      getDailyToken(room.name, true),  // browser needs owner to start/receive transcription
     ]);
 
     // 3. Start both agents on Pipecat Cloud.
     //    If session2 fails, clean up session1 so we don't leak agents.
+    //    When prompt is empty the PCC bot uses its baked-in config defaults.
     const session1 = await startPCCSession({
       room_url: room.url,
       token: token1,
       name: agent1.name,
-      system_prompt: agent1.prompt,
-      voice_id: agent1.voice_id,
+      ...(agent1.prompt ? { system_prompt: agent1.prompt } : {}),
+      ...(agent1.voice_id ? { voice_id: agent1.voice_id } : {}),
       goes_first: true,
       known_agents: allNames,
       max_turns: maxTurns,
@@ -159,8 +165,8 @@ export async function POST(request: NextRequest) {
         room_url: room.url,
         token: token2,
         name: agent2.name,
-        system_prompt: agent2.prompt,
-        voice_id: agent2.voice_id,
+        ...(agent2.prompt ? { system_prompt: agent2.prompt } : {}),
+        ...(agent2.voice_id ? { voice_id: agent2.voice_id } : {}),
         goes_first: false,
         known_agents: allNames,
         max_turns: maxTurns,

@@ -25,8 +25,8 @@ export const DEFAULT_TOPIC = "enterprise software sales";
 
 export const PCC_AGENT_NAME = "outrival-agent";
 
-/** Label for app-messages (agent transcript events). Must match agents. */
-export const APP_MESSAGE_LABEL = "outrival";
+/** Label for app-messages (agent transcript events). Must match RTVI observer default. */
+export const APP_MESSAGE_LABEL = "rtvi-ai";
 
 // ---------------------------------------------------------------------------
 // Prompt template variables

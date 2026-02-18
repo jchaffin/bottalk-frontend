@@ -38,14 +38,52 @@ model Session {
   @@map("sessions")
 }
 
-/// Saved conversation transcript for replay.
+/// Saved conversation transcript for replay + KPI classification.
 model Conversation {
   id         String   @id @default(cuid())
   title      String
   agentNames String[] @map("agent_names")
   /// [{ speaker, text }]
   lines      Json
-  createdAt  DateTime @default(now()) @map("created_at")
+  /// Daily room URL for this conversation
+  roomUrl        String?  @map("room_url")
+  /// Per-turn latency metrics: [{ agent, turn, ttfb, llm, tts, e2e }]
+  latencyMetrics Json?    @map("latency_metrics")
+  /// Pinecone vector ID for embedded transcript
+  embeddingId String?  @map("embedding_id")
+  /// JSON: { resolution, sentiment, efficiency, ... }
+  kpiScores   Json?    @map("kpi_scores")
+  /// Overall outcome label from KPI classification
+  outcome     String?
+  /// Live summary generated during the conversation
+  summary     String?
+  createdAt   DateTime @default(now()) @map("created_at")
 
   @@map("conversations")
+}
+
+/// Per-session latency metrics reported by Pipecat agents.
+model SessionMetric {
+  id          String   @id @default(cuid())
+  sessionId   String   @map("session_id")
+  agentName   String   @map("agent_name")
+  /// Time to first byte from LLM (ms)
+  ttfb        Float?
+  /// LLM processing duration (ms)
+  llmDuration Float?   @map("llm_duration")
+  /// TTS processing duration (ms)
+  ttsDuration Float?   @map("tts_duration")
+  /// End-to-end latency: user speech end → audio playback start (ms)
+  e2eLatency  Float?   @map("e2e_latency")
+  /// User-to-bot latency: VAD user stopped speaking → bot started speaking (ms)
+  userBotLatency Float? @map("user_bot_latency")
+  /// LLM token usage: { prompt_tokens, completion_tokens }
+  tokenUsage  Json?    @map("token_usage")
+  /// Turn index within the session
+  turnIndex   Int      @default(0) @map("turn_index")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([sessionId])
+  @@index([createdAt])
+  @@map("session_metrics")
 }

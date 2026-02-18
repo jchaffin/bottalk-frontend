@@ -4,17 +4,27 @@ import { openai } from "@ai-sdk/openai";
 import { z } from "zod";
 import { TOPIC_MIN_LENGTH, TOPIC_MAX_LENGTH } from "@/lib/config";
 
+const defaultEntry = z.object({
+  variable: z.string().describe("The variable name (e.g. agent_name)"),
+  value: z.string().describe("The suggested default value"),
+});
+
 const agentSchema = z.object({
   name: z.string(),
   role: z.string(),
   prompt: z.string(),
-  defaults: z.record(z.string(), z.string()).describe("Default values for every {{variable}} used in the prompt"),
+  defaults: z.array(defaultEntry).describe("Default values for every {{variable}} used in the prompt"),
 });
 
 const schema = z.object({
   agent1: agentSchema,
   agent2: agentSchema,
 });
+
+/** Convert the array-of-objects from the LLM into a plain Record. */
+function toDefaultsRecord(arr: { variable: string; value: string }[]): Record<string, string> {
+  return Object.fromEntries(arr.map(({ variable, value }) => [variable, value]));
+}
 
 const SYSTEM_PROMPT = `You are a conversation designer. Given a topic, generate system prompts for two AI voice agents who will have a live phone conversation.
 
@@ -25,7 +35,7 @@ IMPORTANT: Use {{variable_name}} template syntax for ALL specific nouns in the p
 For each agent, also return a "defaults" object mapping every variable name to its suggested default value.
 
 Example prompt fragment: "You are {{agent_name}}, a {{role}} at {{company}}. Your product — {{product}} — costs {{price}}."
-Example defaults: { "agent_name": "Sarah", "role": "sales rep", "company": "TechFlow", "product": "TechFlow AI", "price": "$99/mo" }
+Example defaults: [{ "variable": "agent_name", "value": "Sarah" }, { "variable": "role", "value": "sales rep" }, { "variable": "company", "value": "TechFlow" }]
 
 Each prompt MUST end with these rules:
 Rules:
@@ -59,7 +69,16 @@ export async function POST(request: NextRequest) {
       prompt: `Topic: ${topic.trim()}`,
     });
 
-    return NextResponse.json(output);
+    // Reshape defaults from array-of-objects back to Record<string, string>
+    // so the rest of the app receives the expected shape.
+    const response = output
+      ? {
+          agent1: { ...output.agent1, defaults: toDefaultsRecord(output.agent1.defaults) },
+          agent2: { ...output.agent2, defaults: toDefaultsRecord(output.agent2.defaults) },
+        }
+      : output;
+
+    return NextResponse.json(response);
   } catch (err) {
     console.error("POST /api/generate error:", err);
     return NextResponse.json(

@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { embedBatch } from "@/lib/embeddings";
+import { classifyTranscript } from "@/lib/kpis";
+import { getIndex } from "@/lib/pinecone";
 
 export async function GET() {
   try {
@@ -20,7 +23,7 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { title, agentNames, lines } = body;
+    const { title, agentNames, lines, roomUrl, latencyMetrics } = body;
 
     if (!title || !Array.isArray(agentNames) || !Array.isArray(lines)) {
       return NextResponse.json(
@@ -29,16 +32,27 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const cleanLines = lines.map((l: { speaker?: string; text?: string }) => ({
+      speaker: l.speaker ?? "Unknown",
+      text: l.text ?? "",
+    }));
+
     const conversation = await prisma.conversation.create({
       data: {
         title: String(title).slice(0, 500),
         agentNames: agentNames.map(String).slice(0, 2),
-        lines: lines.map((l: { speaker?: string; text?: string }) => ({
-          speaker: l.speaker ?? "Unknown",
-          text: l.text ?? "",
-        })),
+        lines: cleanLines,
+        roomUrl: roomUrl ? String(roomUrl) : null,
+        latencyMetrics: Array.isArray(latencyMetrics) ? latencyMetrics : null,
       },
     });
+
+    // Auto-embed + classify if Pinecone is configured (fire-and-forget)
+    if (process.env.PINECONE_API_KEY && cleanLines.length > 0) {
+      embedAndClassify(conversation.id, cleanLines).catch((err) =>
+        console.error("Auto-embed error:", err),
+      );
+    }
 
     return NextResponse.json(conversation);
   } catch (err) {
@@ -48,4 +62,45 @@ export async function POST(request: NextRequest) {
       { status: 500 },
     );
   }
+}
+
+async function embedAndClassify(
+  conversationId: string,
+  lines: { speaker: string; text: string }[],
+) {
+  const utteranceTexts = lines.map((l) => `${l.speaker}: ${l.text}`);
+  const [embeddings, classification] = await Promise.all([
+    embedBatch(utteranceTexts),
+    classifyTranscript(lines),
+  ]);
+
+  const embeddingPrefix = `conv-${conversationId}`;
+  const index = getIndex();
+  const records = embeddings.map((values, i) => ({
+    id: `${embeddingPrefix}-${i}`,
+    values,
+    metadata: {
+      conversationId,
+      lineIndex: i,
+      speaker: lines[i].speaker,
+      text: lines[i].text,
+      outcome: classification.outcome,
+    },
+  }));
+
+  for (let i = 0; i < records.length; i += 100) {
+    await index.upsert({ records: records.slice(i, i + 100) });
+  }
+
+  await prisma.conversation.update({
+    where: { id: conversationId },
+    data: {
+      embeddingId: embeddingPrefix,
+      kpiScores: {
+        ...classification.scores,
+        turnAnnotations: classification.turnAnnotations,
+      } as unknown as Record<string, unknown>,
+      outcome: classification.outcome,
+    },
+  });
 }

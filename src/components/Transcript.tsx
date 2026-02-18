@@ -2,8 +2,39 @@
 
 import { memo, useEffect, useRef } from "react";
 import { type TranscriptLine } from "@/lib/api";
+import { Activity } from "lucide-react";
 
 const AGENT_COLOR_CLASSES = ["text-accent-agent1", "text-accent-agent2"];
+
+function latencyColor(ms: number): string {
+  if (ms < 500) return "text-emerald-400";
+  if (ms < 1000) return "text-amber-400";
+  return "text-red-400";
+}
+
+function MetricTag({ label, ms }: { label: string; ms: number }) {
+  return (
+    <span className={`inline-flex items-center gap-0.5 text-[10px] font-mono ${latencyColor(ms)}`}>
+      <span className="text-muted/50 uppercase">{label}</span>
+      {ms}ms
+    </span>
+  );
+}
+
+function LatencyBadge({ metrics }: { metrics: NonNullable<TranscriptLine["metrics"]> }) {
+  const hasAny = metrics.ttfb != null || metrics.llm != null || metrics.tts != null || metrics.e2e != null;
+  if (!hasAny) return null;
+
+  return (
+    <span className="inline-flex items-center gap-2 ml-2 px-2 py-0.5 rounded-md bg-white/[0.03] border border-border/50">
+      <Activity className="w-3 h-3 text-muted/40 flex-shrink-0" />
+      {metrics.ttfb != null && <MetricTag label="TTFB" ms={metrics.ttfb} />}
+      {metrics.llm != null && <MetricTag label="LLM" ms={metrics.llm} />}
+      {metrics.tts != null && <MetricTag label="TTS" ms={metrics.tts} />}
+      {metrics.e2e != null && <MetricTag label="E2E" ms={metrics.e2e} />}
+    </span>
+  );
+}
 
 const Line = memo(function Line({
   line,
@@ -15,11 +46,18 @@ const Line = memo(function Line({
   const colorClass = colorMap[line.speaker] || "text-muted";
   return (
     <div className={`py-1.5 ${line.interim ? "opacity-40" : ""}`}>
-      <span className={`font-semibold ${colorClass}`}>
-        {line.speaker}
-      </span>
-      <span className="text-muted mx-1.5">:</span>
-      <span className="text-foreground/90">{line.text}</span>
+      <div>
+        <span className={`font-semibold ${colorClass}`}>
+          {line.speaker}
+        </span>
+        <span className="text-muted mx-1.5">:</span>
+        <span className="text-foreground/90">{line.text}</span>
+      </div>
+      {line.metrics && (
+        <div className="mt-1">
+          <LatencyBadge metrics={line.metrics} />
+        </div>
+      )}
     </div>
   );
 });
