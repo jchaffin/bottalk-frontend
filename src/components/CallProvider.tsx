@@ -372,6 +372,7 @@ export default function CallProvider({
             if (val <= 0) return;
             applyAppMetric("e2e", Math.round(val * 1000));
           } else if (data.type === "turn") {
+            const text = data.output || "";
             const pending = pendingMetrics[agent] || { agent };
             if (data.e2e != null && !pending.e2e) {
               pending.e2e = Math.round((data.e2e ?? 0) * 1000);
@@ -385,6 +386,27 @@ export default function CallProvider({
             metricsSnapshot.push(metric);
             setLiveMetrics([...metricsSnapshot]);
             delete pendingMetrics[agent];
+
+            if (text) {
+              wsDeliveredData = true;
+              linesSnapshot.push({
+                id: nextLineId++,
+                speaker: agent,
+                text,
+                metrics: {
+                  ttfb: metric.ttfb,
+                  llm: metric.llm,
+                  tts: metric.tts,
+                  e2e: metric.e2e,
+                },
+              });
+              queueFlush();
+
+              const cleanLines = linesSnapshot
+                .filter((l) => !l.interim)
+                .map((l) => ({ speaker: l.speaker, text: l.text }));
+              scheduleIncrementalSave(cleanLines, [...metricsSnapshot]);
+            }
           }
         } catch { /* ignore malformed app-messages */ }
       });
