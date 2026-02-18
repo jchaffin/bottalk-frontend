@@ -61,11 +61,12 @@ interface KpiCardsProps {
 }
 
 const KPI_META: { key: string; label: string; color: string }[] = [
-  { key: "resolution", label: "Resolution", color: "#686EFF" },
-  { key: "sentiment", label: "Sentiment", color: "#22c55e" },
-  { key: "efficiency", label: "Efficiency", color: "#f59e0b" },
-  { key: "professionalism", label: "Professional", color: "#8b5cf6" },
-  { key: "goalCompletion", label: "Goal Completion", color: "#ef4444" },
+  { key: "discovery", label: "Discovery", color: "#686EFF" },
+  { key: "objectionHandling", label: "Objection Handling", color: "#22c55e" },
+  { key: "valueArticulation", label: "Value Articulation", color: "#f59e0b" },
+  { key: "turnTaking", label: "Turn Taking", color: "#8b5cf6" },
+  { key: "responseRelevance", label: "Relevance", color: "#06b6d4" },
+  { key: "nextSteps", label: "Next Steps", color: "#ef4444" },
 ];
 
 const OUTCOME_COLORS: Record<string, string> = {

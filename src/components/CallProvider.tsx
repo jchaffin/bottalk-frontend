@@ -129,10 +129,6 @@ export default function CallProvider({
   const destroyedRef = useRef(false);
   /** Daily call object for this session. */
   const callRef = useRef<DailyCall | null>(null);
-  /** Optional WS relay for dev transcripts/metrics. */
-  const wsRef = useRef<WebSocket | null>(null);
-  /** PCC Session API polling timer (used as a fallback metrics source). */
-  const pccPollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   /**
    * Maps Daily session_id → human-readable participant name.
    * Kept outside React state because it's read synchronously inside
@@ -353,8 +349,9 @@ export default function CallProvider({
       });
 
       // ── App-message metrics (agent → browser via Daily) ────────────
-      // Agents broadcast latency metrics as app-messages with label "metrics".
-      // This works in both dev and PCC mode — no WS relay or Session API needed.
+      // Single source of truth for transcript text + latency metrics.
+      // Agents broadcast via Daily REST API send-app-message with retries.
+      // Late-joining browsers receive a replayed history burst on connect.
       call.on("app-message", (ev: DailyEventObjectAppMessage<unknown>) => {
         if (!ev?.data) return;
         try {
@@ -362,14 +359,12 @@ export default function CallProvider({
           if (!isRecord(raw)) return;
           if (raw.label !== "metrics") return;
 
-          console.log("[CallProvider] app-message metrics:", raw.type, raw.agent);
           const agent = typeof raw.agent === "string" ? raw.agent : "Unknown";
           const type = typeof raw.type === "string" ? raw.type : "";
           const value = typeof raw.value === "number" ? raw.value : 0;
           const processor = typeof raw.processor === "string" ? raw.processor.toLowerCase() : "";
 
-          type MetricKey = "ttfb" | "llm" | "tts" | "e2e";
-          function applyAppMetric(key: MetricKey, ms: number) {
+          function applyMetric(key: MetricKey, ms: number) {
             if (!pendingMetrics[agent]) pendingMetrics[agent] = { agent };
             pendingMetrics[agent][key] = ms;
 
@@ -398,28 +393,23 @@ export default function CallProvider({
               processor.includes("tts") ||
               processor.includes("elevenlabs") ||
               processor.includes("cartesia");
-            if (isTts) {
-              applyAppMetric("tts", Math.round(value * 1000));
-            } else {
-              applyAppMetric("ttfb", Math.round(value * 1000));
-            }
+            applyMetric(isTts ? "tts" : "ttfb", Math.round(value * 1000));
           } else if (type === "processing") {
             if (value <= 0) return;
-            const ms = Math.round(value * 1000);
             const isTts =
               processor.includes("tts") ||
               processor.includes("elevenlabs") ||
               processor.includes("cartesia");
-            if (!isTts) {
-              applyAppMetric("llm", ms);
-            }
+            if (!isTts) applyMetric("llm", Math.round(value * 1000));
           } else if (type === "e2e") {
             if (value <= 0) return;
-            applyAppMetric("e2e", Math.round(value * 1000));
+            applyMetric("e2e", Math.round(value * 1000));
           } else if (type === "turn") {
-            // If the dev WS relay is actively delivering turns, ignore app-message
-            // turns to avoid duplicate transcript lines.
-            if (wsTurnsDelivered) return;
+            const turnNum = typeof raw.turn === "number" ? raw.turn : -1;
+            const turnKey = `${agent}:${turnNum}`;
+            if (seenTurns.has(turnKey)) return;
+            seenTurns.add(turnKey);
+
             const text = typeof raw.output === "string" ? raw.output : "";
             const pending = pendingMetrics[agent] || { agent };
             if (typeof raw.e2e === "number" && pending.e2e == null) {
@@ -428,10 +418,7 @@ export default function CallProvider({
             const metric: TurnMetric = {
               ...pending,
               agent,
-              turn:
-                typeof raw.turn === "number"
-                  ? raw.turn
-                  : metricsSnapshot.filter((m) => m.agent === agent).length + 1,
+              turn: turnNum >= 0 ? turnNum : metricsSnapshot.filter((m) => m.agent === agent).length + 1,
               ts: typeof raw.ts === "number" ? raw.ts : undefined,
             };
             metricsSnapshot.push(metric);
@@ -439,11 +426,10 @@ export default function CallProvider({
             delete pendingMetrics[agent];
 
             if (text) {
-              wsDeliveredData = true;
-              // If PCC polling is enabled, stop it once we have clean turn text.
-              if (pccPollTimerRef.current) {
-                clearInterval(pccPollTimerRef.current);
-                pccPollTimerRef.current = null;
+              if (!appMessageActive) {
+                appMessageActive = true;
+                linesSnapshot = [];
+                nextLineId = 0;
               }
               linesSnapshot.push({
                 id: nextLineId++,
@@ -456,6 +442,18 @@ export default function CallProvider({
                   e2e: metric.e2e,
                 },
               });
+              // Re-sort when replayed history arrives out of order
+              if (raw.replay && metricsSnapshot.length > 1) {
+                const tsMap = new Map<string, number>();
+                for (const m of metricsSnapshot) {
+                  if (m.ts != null) tsMap.set(`${m.agent}:${m.turn}`, m.ts);
+                }
+                linesSnapshot.sort((a, b) => {
+                  const aTs = tsMap.get(`${a.speaker}:${metricsSnapshot.find((m) => m.agent === a.speaker)?.turn}`) ?? 0;
+                  const bTs = tsMap.get(`${b.speaker}:${metricsSnapshot.find((m) => m.agent === b.speaker)?.turn}`) ?? 0;
+                  return aTs - bTs;
+                });
+              }
               queueFlush();
 
               const cleanLines = linesSnapshot
@@ -536,262 +534,22 @@ export default function CallProvider({
         });
       }
 
-      // ── WebSocket transcript relay (dev mode) ─────────────────────────
-      // In local dev the agent API server relays pipeline-internal turn
-      // events over a WebSocket.  This delivers complete LLM output text
-      // whereas Daily's transcription-message is Deepgram STT of the
-      // TTS audio.  When the WS relay is delivering data, we prefer it.
-      // The Daily handler is always active as a fallback.
+      // True once we've received at least one app-message "turn" with text.
+      // Suppresses the Deepgram STT fallback so we don't get garbled dupes.
+      let appMessageActive = false;
 
-      let wsDeliveredData = false;
-      let ws: WebSocket | null = null;
-      let wsTurnsDelivered = false;
-      const agentApiUrl = process.env.NEXT_PUBLIC_API_URL;
-
-      // Per-turn latency metrics collected from WS events
       const metricsSnapshot: TurnMetric[] = [];
-      // Accumulate per-agent partial metrics until a "turn" event finalises them
       const pendingMetrics: Record<string, TurnMetric> = {};
+      // Dedup replayed history events by (agent, turn) to avoid double-counting.
+      const seenTurns = new Set<string>();
 
-      if (agentApiUrl) {
-        const wsProto = agentApiUrl.startsWith("https") ? "wss" : "ws";
-        const wsHost = agentApiUrl.replace(/^https?:\/\//, "");
-        const wsEndpoint = `${wsProto}://${wsHost}/ws`;
-
-        ws = new WebSocket(wsEndpoint);
-        wsRef.current = ws;
-
-        ws.onopen = () => {
-          console.debug("[CallProvider] WebSocket transcript relay connected");
-        };
-
-        ws.onmessage = (evt) => {
-          try {
-            const data = JSON.parse(evt.data);
-            const agent: string = data.agent || "Unknown";
-
-            /** Update the pending bucket and, if the turn line already
-             *  exists, patch its metrics + the metricsSnapshot entry.
-             *  Creates NEW objects so React memo detects the change. */
-            function applyMetric(key: MetricKey, ms: number) {
-              if (!pendingMetrics[agent]) pendingMetrics[agent] = { agent };
-              pendingMetrics[agent][key] = ms;
-
-              // Late-arriving metric: replace the line object so memo'd Line re-renders
-              for (let i = linesSnapshot.length - 1; i >= 0; i--) {
-                if (linesSnapshot[i].speaker === agent && linesSnapshot[i].metrics) {
-                  linesSnapshot[i] = {
-                    ...linesSnapshot[i],
-                    metrics: { ...linesSnapshot[i].metrics, [key]: ms },
-                  };
-                  queueFlush();
-                  break;
-                }
-              }
-              // Also patch the metricsSnapshot entry (new object for React)
-              for (let i = metricsSnapshot.length - 1; i >= 0; i--) {
-                if (metricsSnapshot[i].agent === agent) {
-                  metricsSnapshot[i] = { ...metricsSnapshot[i], [key]: ms };
-                  setLiveMetrics([...metricsSnapshot]);
-                  break;
-                }
-              }
-            }
-
-            if (data.type === "ttfb") {
-              const val = data.value ?? 0;
-              if (val <= 0) return;
-              const processor = (data.processor || "").toLowerCase();
-              const isTts = processor.includes("tts") || processor.includes("elevenlabs") || processor.includes("cartesia");
-              if (isTts) {
-                applyMetric("tts", Math.round(val * 1000));
-              } else {
-                applyMetric("ttfb", Math.round(val * 1000));
-              }
-            } else if (data.type === "processing") {
-              const val = data.value ?? 0;
-              if (val <= 0) return;
-              const processor = (data.processor || "").toLowerCase();
-              const ms = Math.round(val * 1000);
-              const isTts = processor.includes("tts") || processor.includes("elevenlabs") || processor.includes("cartesia");
-              if (!isTts) {
-                applyMetric("llm", ms);
-              }
-            } else if (data.type === "e2e") {
-              const val = data.value ?? 0;
-              if (val <= 0) return;
-              applyMetric("e2e", Math.round(val * 1000));
-            } else if (data.type === "turn") {
-              const speaker = agent;
-              const text = data.output || "";
-
-              // Finalise the metrics record for this turn
-              const pending = pendingMetrics[agent] || { agent };
-              if (data.e2e != null && !pending.e2e) {
-                pending.e2e = Math.round((data.e2e ?? 0) * 1000);
-              }
-              const metric: TurnMetric = {
-                ...pending,
-                agent,
-                turn: data.turn ?? metricsSnapshot.filter((m) => m.agent === agent).length + 1,
-                ts: data.ts,
-              };
-              metricsSnapshot.push(metric);
-              setLiveMetrics([...metricsSnapshot]);
-              delete pendingMetrics[agent];
-
-              // Transcript line with per-turn latency attached
-              if (!text) return;
-              if (!wsTurnsDelivered) {
-                wsTurnsDelivered = true;
-                // If PCC polling is enabled, stop it now that WS is active.
-                if (pccPollTimerRef.current) {
-                  clearInterval(pccPollTimerRef.current);
-                  pccPollTimerRef.current = null;
-                }
-              }
-              // Switch from Deepgram fallback to clean turn text. If we already rendered
-              // fallback STT segments, drop them so the transcript doesn't look garbled.
-              if (!wsDeliveredData) {
-                wsDeliveredData = true;
-                linesSnapshot = [];
-                nextLineId = 0;
-              }
-              linesSnapshot.push({
-                id: nextLineId++,
-                speaker,
-                text,
-                metrics: {
-                  ttfb: metric.ttfb,
-                  llm: metric.llm,
-                  tts: metric.tts,
-                  e2e: metric.e2e,
-                },
-              });
-              queueFlush();
-
-              // Real-time save / embed / classify / summarize
-              const cleanLines = linesSnapshot
-                .filter((l) => !l.interim)
-                .map((l) => ({ speaker: l.speaker, text: l.text }));
-              scheduleIncrementalSave(cleanLines, [...metricsSnapshot]);
-            }
-          } catch { /* ignore malformed frames */ }
-        };
-
-        ws.onclose = () => {
-          console.debug("[CallProvider] WebSocket transcript relay disconnected");
-        };
-        ws.onerror = () => {};
-      }
-
-      // ── PCC metrics polling (when no WS relay) ─────────────────────────
-      // In PCC mode there's no dev-server WebSocket to deliver live latency
-      // data.  Instead, poll the PCC Session API via our proxy route.
-      const pccSessionsCsv = agentSessions?.join(",");
-      console.log("[CallProvider] PCC poll check:", { agentApiUrl: agentApiUrl || "(none)", pccSessionsCsv: pccSessionsCsv || "(none)" });
-      if (pccSessionsCsv) {
-        let pccLineCount = 0;
-        console.log("[CallProvider] PCC polling ACTIVE for sessions:", pccSessionsCsv);
-
-        const pollMetrics = async () => {
-          try {
-            const res = await fetch(`/api/pcc-metrics?sessions=${pccSessionsCsv}`);
-            if (!res.ok) { console.warn("[CallProvider] PCC poll failed:", res.status); return; }
-            const data = (await res.json().catch(() => null)) as unknown;
-            const sessions = isRecord(data) && Array.isArray(data.sessions) ? data.sessions : [];
-            if (isRecord(data) && data.errors) console.warn("[CallProvider] PCC proxy errors:", data.errors);
-            const totalItems = sessions.reduce((n: number, s) => {
-              const sr = isRecord(s) ? s : {};
-              const ts = Array.isArray(sr.timeseries) ? sr.timeseries : [];
-              return n + ts.length;
-            }, 0);
-            console.log("[CallProvider] PCC poll:", sessions.length, "sessions,", totalItems, "timeseries items");
-
-            const merged: TurnMetric[] = [];
-            const pccLines: {
-              speaker: string;
-              text: string;
-              ts: number;
-              metrics?: TranscriptLine["metrics"];
-            }[] = [];
-
-            for (const s of sessions) {
-              const sr = isRecord(s) ? s : {};
-              const ts = Array.isArray(sr.timeseries) ? sr.timeseries : [];
-              const agent =
-                isRecord(sr.session) && typeof sr.session.agent_name === "string"
-                  ? sr.session.agent_name
-                  : "Unknown";
-              for (const t of ts) {
-                const tr = isRecord(t) ? t : {};
-                merged.push({
-                  agent,
-                  turn: typeof tr.turn_index === "number" ? tr.turn_index + 1 : undefined,
-                  ttfb: typeof tr.ttfb === "number" ? tr.ttfb : undefined,
-                  llm: typeof tr.llm_duration === "number" ? tr.llm_duration : undefined,
-                  tts: typeof tr.tts_duration === "number" ? tr.tts_duration : undefined,
-                  e2e: typeof tr.e2e_latency === "number" ? tr.e2e_latency : undefined,
-                  ts: typeof tr.ts === "number" ? tr.ts : undefined,
-                });
-                if (typeof tr.output === "string" && tr.output) {
-                  pccLines.push({
-                    speaker: agent,
-                    text: tr.output,
-                    ts: typeof tr.ts === "number" ? tr.ts : 0,
-                    metrics: {
-                      ttfb: typeof tr.ttfb === "number" ? tr.ttfb : undefined,
-                      llm: typeof tr.llm_duration === "number" ? tr.llm_duration : undefined,
-                      tts: typeof tr.tts_duration === "number" ? tr.tts_duration : undefined,
-                      e2e: typeof tr.e2e_latency === "number" ? tr.e2e_latency : undefined,
-                    },
-                  });
-                }
-              }
-            }
-
-            if (merged.length > 0) {
-              merged.sort((a, b) => (a.ts ?? 0) - (b.ts ?? 0));
-              metricsSnapshot.length = 0;
-              metricsSnapshot.push(...merged);
-              setLiveMetrics([...metricsSnapshot]);
-            }
-
-            // Use clean LLM output text from PCC instead of garbled Deepgram STT
-            if (pccLines.length > pccLineCount) {
-              pccLines.sort((a, b) => a.ts - b.ts);
-              wsDeliveredData = true;
-              linesSnapshot = pccLines.map((l, i) => ({
-                id: i,
-                speaker: l.speaker,
-                text: l.text,
-                metrics: l.metrics,
-              }));
-              nextLineId = pccLines.length;
-              pccLineCount = pccLines.length;
-              queueFlush();
-
-              const cleanLines = pccLines.map((l) => ({ speaker: l.speaker, text: l.text }));
-              scheduleIncrementalSave(cleanLines, [...metricsSnapshot]);
-            }
-          } catch { /* ignore fetch errors */ }
-        };
-
-        // Give PCC sessions a moment to warm up; the Session API can 500 briefly during init.
-        pccPollTimerRef.current = setInterval(pollMetrics, 5000);
-        setTimeout(pollMetrics, 6000);
-      }
-
-      // ── Daily transcription (room-level Deepgram) ──────────────────────
-      // Daily broadcasts transcription-message events to all participants.
-      // If the WS relay has already delivered data, skip to avoid
-      // duplicates.  Otherwise this is the primary transcript source.
-      // Deepgram emits sentence/segment-sized events. For the fallback transcript,
-      // merge consecutive final segments for the same speaker so the UI reads like
-      // full turns (until speaker changes).
+      // ── Daily transcription (room-level Deepgram) — visual fallback ────
+      // Shows interim STT text until the first app-message "turn" arrives
+      // with clean LLM output. Once app-messages are delivering, this is
+      // suppressed.
 
       call.on("transcription-message", (msg: DailyEventObjectTranscriptionMessage) => {
-        if (wsDeliveredData) return; // WS relay is active — skip
+        if (appMessageActive) return;
         if (!msg) return;
         const text = msg.text;
         if (!text) return;
@@ -907,19 +665,6 @@ export default function CallProvider({
     return () => {
       destroyedRef.current = true;
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-      // Close WebSocket relay if open
-      const ws = wsRef.current;
-      if (ws) {
-        wsRef.current = null;
-        ws.close();
-      }
-      // Stop PCC metrics polling
-      const pt = pccPollTimerRef.current;
-      if (pt) {
-        pccPollTimerRef.current = null;
-        clearInterval(pt);
-      }
-      // Tear down Daily call
       const call = callRef.current;
       if (call) {
         callRef.current = null;

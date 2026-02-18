@@ -27,7 +27,6 @@ POSTGRES_URL=postgres://...                  # Direct TCP (migrations)
 # Optional
 PCC_AGENT_NAME=outrival-agent
 NEXT_PUBLIC_API_URL=http://localhost:8000    # set for local agent dev
-NEXT_PUBLIC_PCC_CONSOLE_URL=https://pipecat.daily.co/solid-earwig-harlequin-473/agents
 ```
 
 ## Scripts
