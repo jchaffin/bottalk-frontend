@@ -86,7 +86,8 @@ function isPccAtCapacityError(err: unknown): boolean {
 
 async function cleanupAllActiveSessions(): Promise<void> {
   // Best-effort cleanup used when PCC reports capacity reached.
-  const sessions = await prisma.session.findMany().catch(() => []);
+  type SessionRow = { id: string; agentSessions: string[]; roomName: string };
+  const sessions: SessionRow[] = await prisma.session.findMany().catch(() => [] as SessionRow[]);
   if (sessions.length === 0) return;
 
   const allAgentSessionIds = sessions.flatMap((s) => s.agentSessions);

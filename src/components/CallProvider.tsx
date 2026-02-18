@@ -362,6 +362,7 @@ export default function CallProvider({
           if (!isRecord(raw)) return;
           if (raw.label !== "metrics") return;
 
+          console.log("[CallProvider] app-message metrics:", raw.type, raw.agent);
           const agent = typeof raw.agent === "string" ? raw.agent : "Unknown";
           const type = typeof raw.type === "string" ? raw.type : "";
           const value = typeof raw.value === "number" ? raw.value : 0;
@@ -688,34 +689,24 @@ export default function CallProvider({
       // In PCC mode there's no dev-server WebSocket to deliver live latency
       // data.  Instead, poll the PCC Session API via our proxy route.
       const pccSessionsCsv = agentSessions?.join(",");
-      const debug = process.env.NODE_ENV !== "production";
-      if (debug) {
-        console.debug("[CallProvider] PCC poll check:", { agentApiUrl, pccSessionsCsv, willPoll: !agentApiUrl && !!pccSessionsCsv });
-      }
+      console.log("[CallProvider] PCC poll check:", { agentApiUrl: agentApiUrl || "(none)", pccSessionsCsv: pccSessionsCsv || "(none)" });
       if (pccSessionsCsv) {
         let pccLineCount = 0;
-        if (debug) console.debug("[CallProvider] PCC polling ACTIVE for sessions:", pccSessionsCsv);
+        console.log("[CallProvider] PCC polling ACTIVE for sessions:", pccSessionsCsv);
 
         const pollMetrics = async () => {
           try {
             const res = await fetch(`/api/pcc-metrics?sessions=${pccSessionsCsv}`);
-            if (debug) console.debug("[CallProvider] PCC poll response:", res.status);
             if (!res.ok) { console.warn("[CallProvider] PCC poll failed:", res.status); return; }
             const data = (await res.json().catch(() => null)) as unknown;
             const sessions = isRecord(data) && Array.isArray(data.sessions) ? data.sessions : [];
-            if (debug && isRecord(data) && data.errors) console.warn("[CallProvider] PCC proxy errors:", data.errors);
-            if (debug) {
-              console.debug(
-                "[CallProvider] PCC sessions:",
-                sessions.length,
-                "timeseries items:",
-                sessions.reduce((n: number, s) => {
-                  const sr = isRecord(s) ? s : {};
-                  const ts = Array.isArray(sr.timeseries) ? sr.timeseries : [];
-                  return n + ts.length;
-                }, 0),
-              );
-            }
+            if (isRecord(data) && data.errors) console.warn("[CallProvider] PCC proxy errors:", data.errors);
+            const totalItems = sessions.reduce((n: number, s) => {
+              const sr = isRecord(s) ? s : {};
+              const ts = Array.isArray(sr.timeseries) ? sr.timeseries : [];
+              return n + ts.length;
+            }, 0);
+            console.log("[CallProvider] PCC poll:", sessions.length, "sessions,", totalItems, "timeseries items");
 
             const merged: TurnMetric[] = [];
             const pccLines: {
@@ -804,6 +795,7 @@ export default function CallProvider({
         if (!msg) return;
         const text = msg.text;
         if (!text) return;
+        console.log("[CallProvider] transcription-message:", text.slice(0, 60), "from:", msg.participantId);
         const isFinal = msg.rawResponse?.is_final ?? true;
         const participantId = msg.participantId || "";
         // Daily emits participantId here (not session_id). Resolve name from our map,
@@ -888,30 +880,27 @@ export default function CallProvider({
 
       // ── Join the room ───────────────────────────────────────────────
       call.join({ url: roomUrl, token })
-        .then(() => {
+        .then(async () => {
+          console.log("[CallProvider] joined room, starting transcription...");
           setStatus("Connected - listening to the conversation");
-          // Ensure the browser receives transcription events.  The agent
-          // (goes_first) normally starts Deepgram transcription, but
-          // calling startTranscription from the browser side as well
-          // guarantees the local call object is subscribed.  Settings
-          // must match the agent's config to avoid restarting with
-          // different params.  If transcription is already running
-          // Daily throws a harmless error we catch below.
           try {
-            call.startTranscription({
+            await call.startTranscription({
               model: "nova-2-general",
               includeRawResponse: true,
               extra: { interim_results: true },
             });
-            console.debug("[CallProvider] startTranscription succeeded");
+            console.log("[CallProvider] startTranscription succeeded");
           } catch (err: unknown) {
-            console.debug(
+            console.log(
               "[CallProvider] startTranscription (expected if already active):",
               err instanceof Error ? err.message : err,
             );
           }
         })
-        .catch((err) => setStatus(`Error: ${err.message}`));
+        .catch((err) => {
+          console.error("[CallProvider] join failed:", err);
+          setStatus(`Error: ${err.message}`);
+        });
     });
 
     // ── Cleanup on unmount or dependency change ─────────────────────────
