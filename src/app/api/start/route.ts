@@ -194,7 +194,11 @@ export async function POST(request: NextRequest) {
       throw err;
     }
 
-    return NextResponse.json({ roomUrl: room.url, token: browserToken });
+    return NextResponse.json({
+      roomUrl: room.url,
+      token: browserToken,
+      agentSessions: [session1.sessionId, session2.sessionId],
+    });
   } catch (err) {
     console.error("POST /api/start error:", err);
     return NextResponse.json(

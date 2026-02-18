@@ -150,22 +150,24 @@ Speakers: ${speakerNames.join(", ")}
 
 1. Score the conversation against each KPI (0-100).
 2. Provide an overall outcome label.
-3. For EACH turn, provide a specific, actionable annotation about what the agent did.
+3. Annotate only the NOTABLE turns — moments where something important happened (good or bad). Skip routine filler turns.
 
 KPIs:
 ${kpiPrompt}
 
 Outcome labels: "excellent" (avg >= 80), "good" (avg >= 65), "average" (avg >= 50), "needs_improvement" (avg >= 35), "poor" (avg < 35).
 
-Annotation guidelines — be SPECIFIC about the sales technique used, not generic praise:
-- Sales stage: "Discovery question", "Pain point probe", "Value prop delivery", "Trial close", "Objection reframe"
-- Voice technique: "Mirroring language", "Building rapport", "Active listening signal", "Empathy statement"
-- Issues: "Talked over prospect", "Missed buying signal", "Too pushy too early", "Ignored objection", "Feature dump without context"
-- Momentum: "Opened next step", "Anchored pricing", "Created urgency", "Lost control of conversation"
+Annotation guidelines — only tag turns that matter:
+- Sales pivots: "Discovery question", "Pain point probe", "Value prop delivery", "Trial close", "Objection reframe"
+- Voice quality: "Mirroring language", "Active listening signal", "Talked over prospect"
+- Mistakes: "Missed buying signal", "Too pushy too early", "Ignored objection", "Feature dump"
+- Momentum shifts: "Opened next step", "Anchored pricing", "Created urgency", "Lost control"
 
-turnAnnotations MUST have exactly ${lines.length} entries, one per transcript line in order.
-Each label should be 2-6 words describing the specific sales technique or issue.
-relevantKpis: 1-2 KPI keys this turn most impacts.`,
+turnAnnotations MUST have exactly ${lines.length} entries (one per line).
+For notable turns: { "label": "2-6 word annotation", "sentiment": "positive"|"neutral"|"negative", "relevantKpis": ["key"] }
+For unremarkable turns: { "label": "", "sentiment": "neutral", "relevantKpis": [] }
+
+Only annotate ~30-50% of turns. Leave the rest with empty labels.`,
     input: numberedTranscript,
   });
 

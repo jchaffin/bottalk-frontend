@@ -21,6 +21,7 @@ export default function CallPage() {
   const [phase, setPhase] = useState<Phase>("starting");
   const [roomUrl, setRoomUrl] = useState<string | null>(null);
   const [token, setToken] = useState<string | null>(null);
+  const [agentSessions, setAgentSessions] = useState<string[] | undefined>();
   const [error, setError] = useState<string | null>(null);
   const startedRef = useRef(false);
   const collectedMetricsRef = useRef<TurnMetric[]>([]);
@@ -32,9 +33,10 @@ export default function CallPage() {
     stopConversation().catch(() => {});
 
     startQuickCall()
-      .then(({ roomUrl, token }) => {
+      .then(({ roomUrl, token, agentSessions }) => {
         setRoomUrl(roomUrl);
         setToken(token);
+        setAgentSessions(agentSessions);
         setPhase("active");
       })
       .catch((err) => {
@@ -79,6 +81,7 @@ export default function CallPage() {
       <ActiveCall
         roomUrl={roomUrl}
         token={token}
+        agentSessions={agentSessions}
         agentNames={AGENT_NAMES}
         agentColors={DEFAULT_AGENT_COLORS}
         scenarioLabel={SCENARIO_LABEL}

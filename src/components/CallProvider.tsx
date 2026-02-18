@@ -33,6 +33,7 @@ export interface TurnMetric {
 interface CallProviderProps {
   roomUrl: string;
   token: string;
+  agentSessions?: string[];
   agentNames: [string, string];
   agentColors?: [string, string];
   /** Title for the conversation record (used when auto-saving). */
@@ -63,6 +64,7 @@ interface CallProviderProps {
 export default function CallProvider({
   roomUrl,
   token,
+  agentSessions,
   agentNames,
   agentColors = DEFAULT_AGENT_COLORS,
   title,
@@ -520,6 +522,50 @@ export default function CallProvider({
         (containerRef as any)._ws = ws;
       }
 
+      // ── PCC metrics polling (when no WS relay) ─────────────────────────
+      // In PCC mode there's no dev-server WebSocket to deliver live latency
+      // data.  Instead, poll the PCC Session API via our proxy route.
+      let pccPollTimer: ReturnType<typeof setInterval> | null = null;
+      const pccSessionsCsv = agentSessions?.join(",");
+      if (!agentApiUrl && pccSessionsCsv) {
+        const pollMetrics = async () => {
+          try {
+            const res = await fetch(`/api/pcc-metrics?sessions=${pccSessionsCsv}`);
+            if (!res.ok) return;
+            const data = await res.json();
+            const sessions: any[] = data.sessions || [];
+
+            const merged: TurnMetric[] = [];
+            for (const s of sessions) {
+              const ts = s.timeseries || [];
+              const agent = s.session?.agent_name || "Unknown";
+              for (const t of ts) {
+                merged.push({
+                  agent,
+                  turn: t.turn_index != null ? t.turn_index + 1 : undefined,
+                  ttfb: t.ttfb ?? undefined,
+                  llm: t.llm_duration ?? undefined,
+                  tts: t.tts_duration ?? undefined,
+                  e2e: t.e2e_latency ?? undefined,
+                  ts: t.ts,
+                });
+              }
+            }
+
+            if (merged.length > 0) {
+              merged.sort((a, b) => (a.ts ?? 0) - (b.ts ?? 0));
+              metricsSnapshot.length = 0;
+              metricsSnapshot.push(...merged);
+              setLiveMetrics([...metricsSnapshot]);
+            }
+          } catch { /* ignore fetch errors */ }
+        };
+
+        pccPollTimer = setInterval(pollMetrics, 5000);
+        setTimeout(pollMetrics, 3000);
+        (containerRef as any)._pccPollTimer = pccPollTimer;
+      }
+
       // ── Daily transcription (room-level Deepgram) ──────────────────────
       // Daily broadcasts transcription-message events to all participants.
       // If the WS relay has already delivered data, skip to avoid
@@ -645,6 +691,12 @@ export default function CallProvider({
       if (ws) {
         (containerRef as any)._ws = null;
         ws.close();
+      }
+      // Stop PCC metrics polling
+      const pt = (containerRef as any)._pccPollTimer;
+      if (pt) {
+        (containerRef as any)._pccPollTimer = null;
+        clearInterval(pt);
       }
       // Tear down Daily call
       const call = (containerRef as any)._call;

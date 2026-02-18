@@ -7,6 +7,7 @@ import type { TurnMetric } from "./CallProvider";
 interface ActiveCallProps {
   roomUrl: string | null;
   token: string | null;
+  agentSessions?: string[];
   agentNames: [string, string];
   agentColors?: [string, string];
   scenarioLabel: string | null;
@@ -21,6 +22,7 @@ interface ActiveCallProps {
 export default function ActiveCall({
   roomUrl,
   token,
+  agentSessions,
   agentNames,
   agentColors,
   scenarioLabel,
@@ -44,6 +46,7 @@ export default function ActiveCall({
           <CallProvider
             roomUrl={roomUrl}
             token={token}
+            agentSessions={agentSessions}
             agentNames={agentNames}
             agentColors={agentColors}
             title={scenarioLabel ?? undefined}

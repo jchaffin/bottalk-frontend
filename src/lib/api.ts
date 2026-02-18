@@ -11,6 +11,7 @@ const NEXT_API = "";
 export interface StartResponse {
   roomUrl: string;
   token: string;
+  agentSessions?: string[];
 }
 
 export interface TranscriptLine {
