@@ -38,6 +38,7 @@ export default function HomeClient({ scenarios }: HomeClientProps) {
   const [variables, setVariables] = useState<AgentVariables>({ agent1: {}, agent2: {} });
   const [roomUrl, setRoomUrl] = useState<string | null>(null);
   const [token, setToken] = useState<string | null>(null);
+  const [agentSessions, setAgentSessions] = useState<string[] | undefined>();
   const [agentColors, setAgentColors] = useState<[string, string]>(DEFAULT_AGENT_COLORS);
   const [error, setError] = useState<string | null>(null);
   const collectedMetricsRef = useRef<TurnMetric[]>([]);
@@ -89,14 +90,15 @@ export default function HomeClient({ scenarios }: HomeClientProps) {
     try {
       const resolvedPrompt1 = replaceVariables(prompts.agent1.prompt, variables.agent1);
       const resolvedPrompt2 = replaceVariables(prompts.agent2.prompt, variables.agent2);
-      const { roomUrl, token } = await startConversation({
+      const res = await startConversation({
         agents: [
           { name: prompts.agent1.name, role: prompts.agent1.role, prompt: resolvedPrompt1, voice_id: prompts.agent1.voice_id || DEFAULT_VOICE_1 },
           { name: prompts.agent2.name, role: prompts.agent2.role, prompt: resolvedPrompt2, voice_id: prompts.agent2.voice_id || DEFAULT_VOICE_2 },
         ],
       });
-      setRoomUrl(roomUrl);
-      setToken(token);
+      setRoomUrl(res.roomUrl);
+      setToken(res.token);
+      setAgentSessions(res.agentSessions);
       setPhase("active");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to start");
@@ -109,9 +111,10 @@ export default function HomeClient({ scenarios }: HomeClientProps) {
     setScenarioLabel("Quick Start — Sarah & Mike");
     setPhase("starting");
     try {
-      const { roomUrl, token } = await startQuickCall();
-      setRoomUrl(roomUrl);
-      setToken(token);
+      const res = await startQuickCall();
+      setRoomUrl(res.roomUrl);
+      setToken(res.token);
+      setAgentSessions(res.agentSessions);
       setPrompts({
         agent1: { name: "Sarah", role: "Sales Rep", prompt: "(using default)", voice_id: DEFAULT_VOICE_1 },
         agent2: { name: "Mike", role: "Customer", prompt: "(using default)", voice_id: DEFAULT_VOICE_2 },
@@ -126,6 +129,7 @@ export default function HomeClient({ scenarios }: HomeClientProps) {
   function resetState() {
     setRoomUrl(null);
     setToken(null);
+    setAgentSessions(undefined);
     setPhase("idle");
     setPrompts(null);
     setScenarioLabel(null);
@@ -259,6 +263,7 @@ export default function HomeClient({ scenarios }: HomeClientProps) {
         <ActiveCall
           roomUrl={roomUrl}
           token={token}
+          agentSessions={agentSessions}
           agentNames={agentNames}
           agentColors={agentColors}
           scenarioLabel={scenarioLabel}
