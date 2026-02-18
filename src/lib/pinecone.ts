@@ -4,7 +4,9 @@ let _client: Pinecone | null = null;
 
 export function getPinecone(): Pinecone {
   if (!_client) {
-    _client = new Pinecone({ apiKey: "pcsk_4e5u1M_9hGMgZJTBD3S4baPoh124HmpkBXbQN9CqqMNfXDmZ4v4G1aUKBa3CUyuFfjCy6t"});
+    const apiKey = process.env.PINECONE_API_KEY;
+    if (!apiKey) throw new Error("PINECONE_API_KEY is not set");
+    _client = new Pinecone({ apiKey });
   }
   return _client;
 }
