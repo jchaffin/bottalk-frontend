@@ -418,27 +418,29 @@ export default function CallProvider({
 
             /** Update the pending bucket and, if the turn line already
              *  exists, patch its metrics + the metricsSnapshot entry.
-             *  Uses max-wins strategy so later 0ms chunk events don't
-             *  overwrite a real value. */
+             *  Creates NEW objects so React memo detects the change. */
             function applyMetric(key: keyof TurnMetric, ms: number) {
               if (!pendingMetrics[agent]) pendingMetrics[agent] = { agent };
-              const prev = (pendingMetrics[agent] as any)[key];
-              const best = (typeof prev === "number" && prev > ms) ? prev : ms;
-              (pendingMetrics[agent] as any)[key] = best;
+              (pendingMetrics[agent] as any)[key] = ms;
 
-              // Late-arriving metric: patch the last committed line for this agent
-              const lastLine = [...linesSnapshot].reverse().find((l) => l.speaker === agent);
-              if (lastLine?.metrics) {
-                const linePrev = (lastLine.metrics as any)[key];
-                (lastLine.metrics as any)[key] = (typeof linePrev === "number" && linePrev > best) ? linePrev : best;
-                queueFlush();
+              // Late-arriving metric: replace the line object so memo'd Line re-renders
+              for (let i = linesSnapshot.length - 1; i >= 0; i--) {
+                if (linesSnapshot[i].speaker === agent && linesSnapshot[i].metrics) {
+                  linesSnapshot[i] = {
+                    ...linesSnapshot[i],
+                    metrics: { ...linesSnapshot[i].metrics, [key]: ms },
+                  };
+                  queueFlush();
+                  break;
+                }
               }
-              // Also patch the metricsSnapshot entry
-              const lastMetric = [...metricsSnapshot].reverse().find((m) => m.agent === agent);
-              if (lastMetric) {
-                const metPrev = (lastMetric as any)[key];
-                (lastMetric as any)[key] = (typeof metPrev === "number" && metPrev > best) ? metPrev : best;
-                setLiveMetrics([...metricsSnapshot]);
+              // Also patch the metricsSnapshot entry (new object for React)
+              for (let i = metricsSnapshot.length - 1; i >= 0; i--) {
+                if (metricsSnapshot[i].agent === agent) {
+                  metricsSnapshot[i] = { ...metricsSnapshot[i], [key]: ms };
+                  setLiveMetrics([...metricsSnapshot]);
+                  break;
+                }
               }
             }
 

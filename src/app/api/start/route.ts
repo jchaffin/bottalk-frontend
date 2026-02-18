@@ -25,7 +25,7 @@ async function createDailyRoom(): Promise<{ url: string; name: string }> {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      properties: { exp: Math.floor(Date.now() / 1000) + 120 },
+      properties: { exp: Math.floor(Date.now() / 1000) + 600 },
     }),
   });
   if (!res.ok) throw new Error(`Daily room creation failed: ${res.status}`);
