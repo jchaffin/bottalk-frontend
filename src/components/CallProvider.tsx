@@ -297,6 +297,8 @@ export default function CallProvider({
         for (const [k, p] of Object.entries(all)) {
           if (k === "local") continue;
           if (p.user_name) {
+            // Map by participantId (key), session_id, and user_id for robust lookups.
+            participantsRef.current[k] = p.user_name;
             participantsRef.current[p.session_id] = p.user_name;
             if ((p as any).user_id) participantsRef.current[(p as any).user_id] = p.user_name;
           }
@@ -318,9 +320,7 @@ export default function CallProvider({
       // This works in both dev and PCC mode — no WS relay or Session API needed.
       call.on("app-message", (ev: any) => {
         if (!ev?.data) return;
-        if (agentApiUrl) return; // WS relay is primary in local dev mode
         try {
-          const raw = typeof ev.data === "string" ? ev.data : JSON.stringify(ev.data);
           const data = typeof ev.data === "string" ? JSON.parse(ev.data) : ev.data;
           if (data.label !== "metrics") return;
 
@@ -373,6 +373,9 @@ export default function CallProvider({
             if (val <= 0) return;
             applyAppMetric("e2e", Math.round(val * 1000));
           } else if (data.type === "turn") {
+            // If the dev WS relay is actively delivering turns, ignore app-message
+            // turns to avoid duplicate transcript lines.
+            if (wsTurnsDelivered) return;
             const text = data.output || "";
             const pending = pendingMetrics[agent] || { agent };
             if (data.e2e != null && !pending.e2e) {
@@ -390,6 +393,12 @@ export default function CallProvider({
 
             if (text) {
               wsDeliveredData = true;
+              // If PCC polling is enabled, stop it once we have clean turn text.
+              const pt = (containerRef as any)._pccPollTimer;
+              if (pt) {
+                (containerRef as any)._pccPollTimer = null;
+                clearInterval(pt);
+              }
               linesSnapshot.push({
                 id: nextLineId++,
                 speaker: agent,
@@ -491,6 +500,7 @@ export default function CallProvider({
 
       let wsDeliveredData = false;
       let ws: WebSocket | null = null;
+      let wsTurnsDelivered = false;
       const agentApiUrl = process.env.NEXT_PUBLIC_API_URL;
 
       // Per-turn latency metrics collected from WS events
@@ -586,6 +596,15 @@ export default function CallProvider({
 
               // Transcript line with per-turn latency attached
               if (!text) return;
+              if (!wsTurnsDelivered) {
+                wsTurnsDelivered = true;
+                // If PCC polling is enabled, stop it now that WS is active.
+                const pt = (containerRef as any)._pccPollTimer;
+                if (pt) {
+                  (containerRef as any)._pccPollTimer = null;
+                  clearInterval(pt);
+                }
+              }
               wsDeliveredData = true;
               linesSnapshot.push({
                 id: nextLineId++,
@@ -624,7 +643,7 @@ export default function CallProvider({
       let pccPollTimer: ReturnType<typeof setInterval> | null = null;
       const pccSessionsCsv = agentSessions?.join(",");
       console.debug("[CallProvider] PCC poll check:", { agentApiUrl, pccSessionsCsv, willPoll: !agentApiUrl && !!pccSessionsCsv });
-      if (!agentApiUrl && pccSessionsCsv) {
+      if (pccSessionsCsv) {
         let pccLineCount = 0;
         console.debug("[CallProvider] PCC polling ACTIVE for sessions:", pccSessionsCsv);
 
@@ -717,10 +736,22 @@ export default function CallProvider({
         const text = msg.text;
         if (!text) return;
         const isFinal = msg.rawResponse?.is_final ?? true;
-        const sid = msg.participantId || msg.session_id || "";
-        const speaker = participantsRef.current[sid] || "Unknown";
+        const participantId = msg.participantId || "";
+        // Daily emits participantId here (not session_id). Resolve name from our map,
+        // falling back to call.participants() if needed.
+        let speaker = participantsRef.current[participantId];
+        if (!speaker && participantId) {
+          const p = (call.participants() as any)[participantId];
+          if (p?.user_name) {
+            participantsRef.current[participantId] = p.user_name;
+            participantsRef.current[p.session_id] = p.user_name;
+            if (p.user_id) participantsRef.current[p.user_id] = p.user_name;
+            speaker = p.user_name;
+          }
+        }
+        speaker = speaker || "Unknown";
         if (speaker === "Unknown") {
-          console.debug("[transcript] unknown speaker, sid:", sid, "map:", { ...participantsRef.current }, "msg keys:", Object.keys(msg));
+          console.debug("[transcript] unknown speaker, participantId:", participantId, "map:", { ...participantsRef.current }, "msg keys:", Object.keys(msg));
         }
 
         const last = linesSnapshot.length > 0 ? linesSnapshot[linesSnapshot.length - 1] : null;
