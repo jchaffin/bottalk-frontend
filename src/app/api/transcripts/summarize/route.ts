@@ -7,13 +7,20 @@ function getOpenAI() {
   return _openai;
 }
 
+const SUMMARY_SCHEMA = {
+  type: "object" as const,
+  properties: {
+    summary: { type: "string" as const },
+  },
+  required: ["summary"],
+  additionalProperties: false,
+};
+
 /**
  * POST /api/transcripts/summarize
  *
  * Generates a concise live summary of a conversation-in-progress.
  * Body: { lines: { speaker: string; text: string }[] }
- *
- * Returns: { summary: string }
  */
 export async function POST(request: NextRequest) {
   try {
@@ -27,31 +34,37 @@ export async function POST(request: NextRequest) {
       .map((l: { speaker: string; text: string }) => `${l.speaker}: ${l.text}`)
       .join("\n");
 
-    const res = await getOpenAI().chat.completions.create({
-      model: "gpt-4o-mini",
+    const response = await getOpenAI().responses.create({
+      model: "gpt-4.1-mini",
       temperature: 0,
-      max_tokens: 300,
-      messages: [
-        {
-          role: "system",
-          content: `You are an expert conversation analyst providing a live summary of an ongoing sales call between AI agents.
+      max_output_tokens: 300,
+      text: {
+        format: {
+          type: "json_schema",
+          name: "summary_result",
+          strict: true,
+          schema: SUMMARY_SCHEMA,
+        },
+      },
+      instructions: `You are an expert conversation analyst providing a live summary of an ongoing sales call between AI agents.
 
 Write a concise 2-4 sentence summary covering:
 - What stage the conversation is at (intro, discovery, pitch, objection handling, closing)
 - Key topics discussed so far
 - Current trajectory (positive, stalled, negative)
 
-Be direct and factual. No markdown, no bullets. Plain text only.`,
-        },
-        {
-          role: "user",
-          content: transcript,
-        },
-      ],
+Be direct and factual. Plain text only.`,
+      input: transcript,
     });
 
-    const summary = res.choices[0].message.content?.trim() || "";
-    return NextResponse.json({ summary });
+    const outputText = response.output[0]?.type === "message"
+      ? response.output[0].content[0]?.type === "output_text"
+        ? response.output[0].content[0].text
+        : "{}"
+      : "{}";
+
+    const parsed = JSON.parse(outputText);
+    return NextResponse.json({ summary: parsed.summary || "" });
   } catch (err) {
     console.error("POST /api/transcripts/summarize error:", err);
     return NextResponse.json(

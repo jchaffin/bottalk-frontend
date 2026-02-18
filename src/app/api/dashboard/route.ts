@@ -61,7 +61,7 @@ export async function GET(request: NextRequest) {
     const classified = conversations.filter((c: Conversation) => c.kpiScores);
     const kpiAverages: Record<string, number | null> = {};
     if (classified.length > 0) {
-      const keys = ["resolution", "sentiment", "efficiency", "professionalism", "goalCompletion"];
+      const keys = ["discovery", "objectionHandling", "valueArticulation", "turnTaking", "responseRelevance", "nextSteps"];
       for (const key of keys) {
         const vals = classified
           .map((c: Conversation) => (c.kpiScores as Record<string, number>)?.[key])

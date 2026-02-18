@@ -8,51 +8,54 @@ function getOpenAI() {
   return _openai;
 }
 
-/**
- * KPI definitions that transcripts are classified against.
- * Each KPI has a name, description, and scoring criteria.
- */
 export const KPI_DEFINITIONS = [
   {
-    key: "resolution",
-    label: "Resolution",
-    description: "Did the agent successfully resolve the issue or complete the objective?",
-    scale: "0-100 where 100 = fully resolved",
+    key: "discovery",
+    label: "Discovery",
+    description: "Did the sales rep ask probing questions to uncover pain points, budget, timeline, and decision process?",
+    scale: "0-100 where 100 = deep, thorough discovery",
   },
   {
-    key: "sentiment",
-    label: "Sentiment",
-    description: "Overall sentiment of the conversation from the customer/counterpart perspective.",
-    scale: "0-100 where 100 = very positive, 50 = neutral, 0 = very negative",
+    key: "objectionHandling",
+    label: "Objection Handling",
+    description: "How well were the prospect's concerns, hesitations, and objections acknowledged and reframed?",
+    scale: "0-100 where 100 = masterful reframing, 0 = ignored or fumbled",
   },
   {
-    key: "efficiency",
-    label: "Efficiency",
-    description: "How efficiently did the agent handle the conversation? Minimal unnecessary back-and-forth.",
-    scale: "0-100 where 100 = maximally efficient",
+    key: "valueArticulation",
+    label: "Value Articulation",
+    description: "Did the rep connect product capabilities to the prospect's specific stated needs and pain points (not generic feature dumping)?",
+    scale: "0-100 where 100 = perfectly tailored value prop",
   },
   {
-    key: "professionalism",
-    label: "Professionalism",
-    description: "How professional, courteous, and on-brand was the agent?",
-    scale: "0-100 where 100 = exemplary professionalism",
+    key: "turnTaking",
+    label: "Turn-Taking",
+    description: "Natural conversation flow: no talking over the other speaker, appropriate pause length, not rushing or dragging.",
+    scale: "0-100 where 100 = perfectly natural flow",
   },
   {
-    key: "goalCompletion",
-    label: "Goal Completion",
-    description: "Did the agent achieve the stated goal (sale, support resolution, info gathering)?",
-    scale: "0-100 where 100 = all goals met",
+    key: "responseRelevance",
+    label: "Relevance",
+    description: "Were responses on-topic, contextually appropriate, and directly addressing what the other speaker said?",
+    scale: "0-100 where 100 = every response directly relevant",
+  },
+  {
+    key: "nextSteps",
+    label: "Next Steps",
+    description: "Did the sales rep drive toward a concrete next action — demo, free trial, follow-up call, or decision timeline?",
+    scale: "0-100 where 100 = clear next step secured",
   },
 ] as const;
 
 export type KpiKey = (typeof KPI_DEFINITIONS)[number]["key"];
 
 export interface KpiScores {
-  resolution: number;
-  sentiment: number;
-  efficiency: number;
-  professionalism: number;
-  goalCompletion: number;
+  discovery: number;
+  objectionHandling: number;
+  valueArticulation: number;
+  turnTaking: number;
+  responseRelevance: number;
+  nextSteps: number;
 }
 
 export type OutcomeLabel =
@@ -76,11 +79,47 @@ export interface ClassifyResult {
   turnAnnotations: TurnAnnotation[];
 }
 
-/**
- * Classify a transcript against KPI definitions using GPT.
- * Returns per-KPI scores (0-100), an overall outcome label, and
- * per-turn annotations (one per transcript line).
- */
+const CLASSIFY_SCHEMA = {
+  type: "object" as const,
+  properties: {
+    scores: {
+      type: "object" as const,
+      properties: {
+        discovery: { type: "number" as const },
+        objectionHandling: { type: "number" as const },
+        valueArticulation: { type: "number" as const },
+        turnTaking: { type: "number" as const },
+        responseRelevance: { type: "number" as const },
+        nextSteps: { type: "number" as const },
+      },
+      required: ["discovery", "objectionHandling", "valueArticulation", "turnTaking", "responseRelevance", "nextSteps"],
+      additionalProperties: false,
+    },
+    outcome: {
+      type: "string" as const,
+      enum: ["excellent", "good", "average", "needs_improvement", "poor"],
+    },
+    turnAnnotations: {
+      type: "array" as const,
+      items: {
+        type: "object" as const,
+        properties: {
+          label: { type: "string" as const },
+          sentiment: { type: "string" as const, enum: ["positive", "neutral", "negative"] },
+          relevantKpis: {
+            type: "array" as const,
+            items: { type: "string" as const },
+          },
+        },
+        required: ["label", "sentiment", "relevantKpis"],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ["scores", "outcome", "turnAnnotations"],
+  additionalProperties: false,
+};
+
 export async function classifyTranscript(
   lines: { speaker: string; text: string }[],
 ): Promise<ClassifyResult> {
@@ -92,46 +131,51 @@ export async function classifyTranscript(
     .map((l, i) => `[${i}] ${l.speaker}: ${l.text}`)
     .join("\n");
 
-  const res = await getOpenAI().chat.completions.create({
-    model: "gpt-4o-mini",
-    temperature: 0,
-    response_format: { type: "json_object" },
-    messages: [
-      {
-        role: "system",
-        content: `You are an expert conversation analyst. You will receive a numbered transcript.
+  const speakerNames = [...new Set(lines.map((l) => l.speaker))];
 
-1. Score the overall conversation against each KPI on a 0-100 scale.
+  const response = await getOpenAI().responses.create({
+    model: "gpt-4.1-mini",
+    temperature: 0,
+    text: {
+      format: {
+        type: "json_schema",
+        name: "classify_result",
+        strict: true,
+        schema: CLASSIFY_SCHEMA,
+      },
+    },
+    instructions: `You are an expert voice AI sales call analyst. You will receive a numbered transcript of a live sales call between AI voice agents.
+
+Speakers: ${speakerNames.join(", ")}
+
+1. Score the conversation against each KPI (0-100).
 2. Provide an overall outcome label.
-3. For EACH turn (line), provide a brief annotation.
+3. For EACH turn, provide a specific, actionable annotation about what the agent did.
 
 KPIs:
 ${kpiPrompt}
 
 Outcome labels: "excellent" (avg >= 80), "good" (avg >= 65), "average" (avg >= 50), "needs_improvement" (avg >= 35), "poor" (avg < 35).
 
-Respond with JSON:
-{
-  "scores": { "resolution": N, "sentiment": N, "efficiency": N, "professionalism": N, "goalCompletion": N },
-  "outcome": "label",
-  "turnAnnotations": [
-    { "label": "Brief annotation", "sentiment": "positive"|"neutral"|"negative", "relevantKpis": ["kpiKey", ...] },
-    ...
-  ]
-}
+Annotation guidelines — be SPECIFIC about the sales technique used, not generic praise:
+- Sales stage: "Discovery question", "Pain point probe", "Value prop delivery", "Trial close", "Objection reframe"
+- Voice technique: "Mirroring language", "Building rapport", "Active listening signal", "Empathy statement"
+- Issues: "Talked over prospect", "Missed buying signal", "Too pushy too early", "Ignored objection", "Feature dump without context"
+- Momentum: "Opened next step", "Anchored pricing", "Created urgency", "Lost control of conversation"
 
 turnAnnotations MUST have exactly ${lines.length} entries, one per transcript line in order.
-Each label should be 2-5 words (e.g. "Strong opening", "Missed objection", "Good follow-up question").
-relevantKpis should list which KPI keys this turn most affects (1-2 keys).`,
-      },
-      {
-        role: "user",
-        content: numberedTranscript,
-      },
-    ],
+Each label should be 2-6 words describing the specific sales technique or issue.
+relevantKpis: 1-2 KPI keys this turn most impacts.`,
+    input: numberedTranscript,
   });
 
-  const parsed = JSON.parse(res.choices[0].message.content || "{}");
+  const outputText = response.output[0]?.type === "message"
+    ? response.output[0].content[0]?.type === "output_text"
+      ? response.output[0].content[0].text
+      : "{}"
+    : "{}";
+
+  const parsed = JSON.parse(outputText);
 
   const turnAnnotations: TurnAnnotation[] = Array.isArray(parsed.turnAnnotations)
     ? parsed.turnAnnotations.map((a: any) => ({
@@ -148,17 +192,15 @@ relevantKpis should list which KPI keys this turn most affects (1-2 keys).`,
   };
 }
 
-/**
- * Derive an outcome label from KPI scores.
- */
 export function outcomeFromScores(scores: KpiScores): OutcomeLabel {
   const avg =
-    (scores.resolution +
-      scores.sentiment +
-      scores.efficiency +
-      scores.professionalism +
-      scores.goalCompletion) /
-    5;
+    (scores.discovery +
+      scores.objectionHandling +
+      scores.valueArticulation +
+      scores.turnTaking +
+      scores.responseRelevance +
+      scores.nextSteps) /
+    6;
   if (avg >= 80) return "excellent";
   if (avg >= 65) return "good";
   if (avg >= 50) return "average";
@@ -166,7 +208,6 @@ export function outcomeFromScores(scores: KpiScores): OutcomeLabel {
   return "poor";
 }
 
-/** Human-readable outcome labels. */
 export const OUTCOME_LABELS: Record<OutcomeLabel, string> = {
   excellent: "Excellent",
   good: "Good",
@@ -175,7 +216,6 @@ export const OUTCOME_LABELS: Record<OutcomeLabel, string> = {
   poor: "Poor",
 };
 
-/** Color classes for outcome badges. */
 export const OUTCOME_COLORS: Record<OutcomeLabel, string> = {
   excellent: "text-emerald-400",
   good: "text-green-400",

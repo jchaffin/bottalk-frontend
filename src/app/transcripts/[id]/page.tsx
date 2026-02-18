@@ -161,11 +161,12 @@ export default function TranscriptPage() {
 
   const kpiData = conversation.kpiScores as (KpiScores & { turnAnnotations?: TurnAnnotation[] }) | null;
   const scores = kpiData ? {
-    resolution: kpiData.resolution,
-    sentiment: kpiData.sentiment,
-    efficiency: kpiData.efficiency,
-    professionalism: kpiData.professionalism,
-    goalCompletion: kpiData.goalCompletion,
+    discovery: kpiData.discovery,
+    objectionHandling: kpiData.objectionHandling,
+    valueArticulation: kpiData.valueArticulation,
+    turnTaking: kpiData.turnTaking,
+    responseRelevance: kpiData.responseRelevance,
+    nextSteps: kpiData.nextSteps,
   } : null;
   const turnAnnotations: TurnAnnotation[] = kpiData?.turnAnnotations ?? [];
   const outcome = conversation.outcome as OutcomeLabel | null;
