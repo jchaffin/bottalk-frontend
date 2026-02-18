@@ -318,6 +318,7 @@ export default function CallProvider({
       // This works in both dev and PCC mode — no WS relay or Session API needed.
       call.on("app-message", (ev: any) => {
         if (!ev?.data) return;
+        if (agentApiUrl) return; // WS relay is primary in local dev mode
         try {
           const raw = typeof ev.data === "string" ? ev.data : JSON.stringify(ev.data);
           const data = typeof ev.data === "string" ? JSON.parse(ev.data) : ev.data;
