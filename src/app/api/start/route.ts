@@ -203,6 +203,11 @@ export async function POST(request: NextRequest) {
     const rawBody = (await request.json().catch(() => null)) as unknown;
     const body = isRecord(rawBody) ? rawBody : {};
 
+    // Always clear any previous runs before starting a new one.
+    // This prevents PCC-AGENT-AT-CAPACITY when sessions/rooms were leaked
+    // (refreshes, crashes, or users hammering Start).
+    await cleanupAllActiveSessions();
+
     let agents: [AgentConfig, AgentConfig] | undefined;
     if (Array.isArray(body.agents) && body.agents.length >= 2) {
       const a1 = parseAgentConfig(body.agents[0]);
