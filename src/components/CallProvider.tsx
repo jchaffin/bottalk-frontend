@@ -622,15 +622,19 @@ export default function CallProvider({
       // data.  Instead, poll the PCC Session API via our proxy route.
       let pccPollTimer: ReturnType<typeof setInterval> | null = null;
       const pccSessionsCsv = agentSessions?.join(",");
+      console.debug("[CallProvider] PCC poll check:", { agentApiUrl, pccSessionsCsv, willPoll: !agentApiUrl && !!pccSessionsCsv });
       if (!agentApiUrl && pccSessionsCsv) {
         let pccLineCount = 0;
+        console.debug("[CallProvider] PCC polling ACTIVE for sessions:", pccSessionsCsv);
 
         const pollMetrics = async () => {
           try {
             const res = await fetch(`/api/pcc-metrics?sessions=${pccSessionsCsv}`);
-            if (!res.ok) return;
+            console.debug("[CallProvider] PCC poll response:", res.status);
+            if (!res.ok) { console.warn("[CallProvider] PCC poll failed:", res.status); return; }
             const data = await res.json();
             const sessions: any[] = data.sessions || [];
+            console.debug("[CallProvider] PCC sessions:", sessions.length, "timeseries items:", sessions.reduce((n: number, s: any) => n + (s.timeseries?.length || 0), 0));
 
             const merged: TurnMetric[] = [];
             const pccLines: { speaker: string; text: string; ts: number; metrics?: any }[] = [];
