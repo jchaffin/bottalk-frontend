@@ -524,6 +524,11 @@ export default function CallProvider({
       // Daily broadcasts transcription-message events to all participants.
       // If the WS relay has already delivered data, skip to avoid
       // duplicates.  Otherwise this is the primary transcript source.
+      // Track when the last final chunk arrived per speaker so we can
+      // consolidate rapid-fire Deepgram chunks into a single line.
+      const lastFinalTs: Record<string, number> = {};
+      const MERGE_WINDOW_MS = 3000;
+
       call.on("transcription-message", (msg: any) => {
         if (wsDeliveredData) return; // WS relay is active — skip
         if (!msg) return;
@@ -537,13 +542,20 @@ export default function CallProvider({
         }
 
         const last = linesSnapshot.length > 0 ? linesSnapshot[linesSnapshot.length - 1] : null;
+        const now = Date.now();
 
         if (isFinal) {
+          const elapsed = now - (lastFinalTs[speaker] ?? 0);
           if (last && last.speaker === speaker && last.interim) {
+            // Replace interim with final
             linesSnapshot[linesSnapshot.length - 1] = { ...last, text, interim: false };
+          } else if (last && last.speaker === speaker && !last.interim && elapsed < MERGE_WINDOW_MS) {
+            // Same speaker, within merge window — append to existing line
+            linesSnapshot[linesSnapshot.length - 1] = { ...last, text: last.text + " " + text };
           } else {
             linesSnapshot.push({ id: nextLineId++, speaker, text });
           }
+          lastFinalTs[speaker] = now;
         } else {
           if (last && last.speaker === speaker && last.interim) {
             linesSnapshot[linesSnapshot.length - 1] = { ...last, text };
@@ -645,19 +657,25 @@ export default function CallProvider({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomUrl, token]);
 
-  // ── Derived live latency data ────────────────────────────────────────
-  // Show only the latest turn per agent (not averages)
-  const latestByAgent: Record<string, TurnMetric> = {};
-  for (const m of liveMetrics) {
-    latestByAgent[m.agent] = m; // last one wins
+  // ── Derived aggregate latency ──────────────────────────────────────
+  function avgOf(key: keyof TurnMetric): number | null {
+    const vals = liveMetrics
+      .map((m) => m[key])
+      .filter((v): v is number => typeof v === "number" && v > 0);
+    return vals.length > 0 ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : null;
   }
-  const uniqueAgents = Object.keys(latestByAgent);
 
   function latencyColor(ms: number): string {
     if (ms < 500) return "text-emerald-400";
     if (ms < 1000) return "text-amber-400";
     return "text-red-400";
   }
+
+  const aggTtfb = avgOf("ttfb");
+  const aggLlm = avgOf("llm");
+  const aggTts = avgOf("tts");
+  const aggE2e = avgOf("e2e");
+  const totalTurns = liveMetrics.length;
 
   // ── Render ──────────────────────────────────────────────────────────
   return (
@@ -677,6 +695,28 @@ export default function CallProvider({
           />
         ))}
       </div>
+
+      {/* Aggregate latency stats */}
+      {totalTurns > 0 && (
+        <div className="w-full grid grid-cols-4 gap-3">
+          {[
+            { label: "Avg TTFB", value: aggTtfb, color: "#686EFF" },
+            { label: "Avg LLM", value: aggLlm, color: "#22c55e" },
+            { label: "Avg TTS", value: aggTts, color: "#f59e0b" },
+            { label: "Avg E2E", value: aggE2e, color: "#ef4444" },
+          ].map((m) => (
+            <div key={m.label} className="rounded-xl bg-surface-elevated border border-border p-3 text-center">
+              <p className="text-[10px] uppercase tracking-wider text-muted mb-1">{m.label}</p>
+              <p
+                className="text-lg font-bold font-mono"
+                style={{ color: m.value != null ? m.color : undefined }}
+              >
+                {m.value != null ? `${m.value}ms` : "—"}
+              </p>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Room link + mute toggle */}
       <div className="flex items-center gap-3">
@@ -702,53 +742,6 @@ export default function CallProvider({
           {muted ? "Muted" : "Audio On"}
         </button>
       </div>
-
-      {/* Live latency stats */}
-      {liveMetrics.length > 0 && (
-        <div className="w-full rounded-xl bg-surface-elevated border border-border p-4 space-y-3">
-          <h3 className="text-[11px] font-semibold uppercase tracking-wider text-muted">
-            Live Latency
-          </h3>
-          <div className="space-y-2">
-            {uniqueAgents.map((agent) => {
-              const m = latestByAgent[agent];
-              const turnCount = liveMetrics.filter((t) => t.agent === agent).length;
-              return (
-                <div key={agent} className="flex items-center gap-4 text-xs">
-                  <span className="font-semibold text-foreground w-16 shrink-0 truncate">{agent}</span>
-                  <div className="flex gap-4">
-                    {m.ttfb != null && (
-                      <div className="flex flex-col items-center">
-                        <span className="text-[9px] uppercase tracking-wider text-muted">TTFB</span>
-                        <span className={`font-mono font-medium ${latencyColor(m.ttfb)}`}>{m.ttfb}ms</span>
-                      </div>
-                    )}
-                    {m.llm != null && (
-                      <div className="flex flex-col items-center">
-                        <span className="text-[9px] uppercase tracking-wider text-muted">LLM</span>
-                        <span className={`font-mono font-medium ${latencyColor(m.llm)}`}>{m.llm}ms</span>
-                      </div>
-                    )}
-                    {m.tts != null && (
-                      <div className="flex flex-col items-center">
-                        <span className="text-[9px] uppercase tracking-wider text-muted">TTS</span>
-                        <span className={`font-mono font-medium ${latencyColor(m.tts)}`}>{m.tts}ms</span>
-                      </div>
-                    )}
-                    {m.e2e != null && (
-                      <div className="flex flex-col items-center">
-                        <span className="text-[9px] uppercase tracking-wider text-muted">E2E</span>
-                        <span className={`font-mono font-medium ${latencyColor(m.e2e)}`}>{m.e2e}ms</span>
-                      </div>
-                    )}
-                  </div>
-                  <span className="text-[10px] text-muted ml-auto">turn {m.turn ?? turnCount}</span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
 
       {/* Live summary */}
       {liveSummary && (
