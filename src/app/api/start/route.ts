@@ -74,6 +74,54 @@ async function deleteDailyRoom(roomName: string): Promise<void> {
   }).catch(() => {});
 }
 
+type DailyPresenceParticipant = {
+  userName?: string;
+  session_id?: string;
+};
+
+async function waitForDailyParticipants(
+  roomName: string,
+  requiredNames: string[],
+  timeoutMs = 15_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  const required = new Set(requiredNames.filter(Boolean));
+
+  // Presence snapshots can lag; poll a few times with small delay.
+  while (Date.now() < deadline) {
+    const res = await fetch(`https://api.daily.co/v1/rooms/${roomName}/presence`, {
+      headers: { Authorization: `Bearer ${DAILY_API_KEY}` },
+      cache: "no-store",
+      next: { revalidate: 0 },
+      signal: AbortSignal.timeout(5_000),
+    }).catch(() => null);
+
+    if (res && res.ok) {
+      const raw = (await res.json().catch(() => null)) as unknown;
+      const participants: DailyPresenceParticipant[] =
+        isRecord(raw) && Array.isArray(raw.participants)
+          ? (raw.participants as DailyPresenceParticipant[])
+          : [];
+      const presentNames = new Set(
+        participants
+          .map((p) => p?.userName)
+          .filter((n): n is string => typeof n === "string" && n.length > 0),
+      );
+
+      let allPresent = true;
+      for (const n of required) {
+        if (!presentNames.has(n)) {
+          allPresent = false;
+          break;
+        }
+      }
+      if (allPresent) return;
+    }
+
+    await new Promise((r) => setTimeout(r, 750));
+  }
+}
+
 function isPccAtCapacityError(err: unknown): boolean {
   const msg =
     err instanceof Error ? err.message : typeof err === "string" ? err : "";
@@ -217,7 +265,9 @@ export async function POST(request: NextRequest) {
     // Max LLM turns per agent — hard ceiling to prevent runaway API usage.
     const maxTurns = 20;
 
-    async function attemptStartOnce() {
+    type StartPayload = { roomUrl: string; token: string; agentSessions: string[] };
+
+    async function attemptStartOnce(): Promise<StartPayload> {
       // 1. Create a Daily room
       const room = await createDailyRoom();
 
@@ -278,11 +328,11 @@ export async function POST(request: NextRequest) {
           throw err;
         }
 
-        return NextResponse.json({
+        return {
           roomUrl: room.url,
           token: browserToken,
           agentSessions: [session1.sessionId, session2.sessionId],
-        });
+        };
       } catch (err) {
         // Avoid leaking Daily rooms if PCC fails.
         await deleteDailyRoom(room.name);
@@ -290,13 +340,26 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    async function startWithReadiness(): Promise<StartPayload> {
+      const payload = await attemptStartOnce();
+      const roomName = payload.roomUrl
+        ? payload.roomUrl.replace(/\/+$/, "").split("/").pop() || ""
+        : "";
+      if (roomName) {
+        await waitForDailyParticipants(roomName, allNames, 15_000).catch(() => {});
+      }
+      return payload;
+    }
+
     try {
-      return await attemptStartOnce();
+      const payload = await startWithReadiness();
+      return NextResponse.json(payload);
     } catch (err) {
       if (isPccAtCapacityError(err)) {
         await cleanupAllActiveSessions();
         await new Promise((r) => setTimeout(r, 1500));
-        return await attemptStartOnce();
+        const payload = await startWithReadiness();
+        return NextResponse.json(payload);
       }
       throw err;
     }
