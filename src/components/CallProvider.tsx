@@ -407,21 +407,27 @@ export default function CallProvider({
             const agent: string = data.agent || "Unknown";
 
             /** Update the pending bucket and, if the turn line already
-             *  exists, patch its metrics + the metricsSnapshot entry. */
+             *  exists, patch its metrics + the metricsSnapshot entry.
+             *  Uses max-wins strategy so later 0ms chunk events don't
+             *  overwrite a real value. */
             function applyMetric(key: keyof TurnMetric, ms: number) {
               if (!pendingMetrics[agent]) pendingMetrics[agent] = { agent };
-              (pendingMetrics[agent] as any)[key] = ms;
+              const prev = (pendingMetrics[agent] as any)[key];
+              const best = (typeof prev === "number" && prev > ms) ? prev : ms;
+              (pendingMetrics[agent] as any)[key] = best;
 
               // Late-arriving metric: patch the last committed line for this agent
               const lastLine = [...linesSnapshot].reverse().find((l) => l.speaker === agent);
               if (lastLine?.metrics) {
-                (lastLine.metrics as any)[key] = ms;
+                const linePrev = (lastLine.metrics as any)[key];
+                (lastLine.metrics as any)[key] = (typeof linePrev === "number" && linePrev > best) ? linePrev : best;
                 queueFlush();
               }
               // Also patch the metricsSnapshot entry
               const lastMetric = [...metricsSnapshot].reverse().find((m) => m.agent === agent);
               if (lastMetric) {
-                (lastMetric as any)[key] = ms;
+                const metPrev = (lastMetric as any)[key];
+                (lastMetric as any)[key] = (typeof metPrev === "number" && metPrev > best) ? metPrev : best;
                 setLiveMetrics([...metricsSnapshot]);
               }
             }
@@ -429,13 +435,19 @@ export default function CallProvider({
             if (data.type === "ttfb") {
               const val = data.value ?? 0;
               if (val <= 0) return;
-              applyMetric("ttfb", Math.round(val * 1000));
+              const processor = (data.processor || "").toLowerCase();
+              const isTts = processor.includes("tts") || processor.includes("elevenlabs") || processor.includes("cartesia");
+              // LLM TTFB → "ttfb" field; TTS TTFB is less useful, skip it
+              if (!isTts) {
+                applyMetric("ttfb", Math.round(val * 1000));
+              }
             } else if (data.type === "processing") {
               const val = data.value ?? 0;
               if (val <= 0) return;
               const processor = (data.processor || "").toLowerCase();
               const ms = Math.round(val * 1000);
-              if (processor.includes("tts") || processor.includes("elevenlabs") || processor.includes("cartesia")) {
+              const isTts = processor.includes("tts") || processor.includes("elevenlabs") || processor.includes("cartesia");
+              if (isTts) {
                 applyMetric("tts", ms);
               } else {
                 applyMetric("llm", ms);
