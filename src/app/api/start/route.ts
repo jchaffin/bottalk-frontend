@@ -376,23 +376,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Retry up to 3 times — PCC cold starts are unreliable.
-    let lastErr: unknown;
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      try {
-        const payload = await attemptStartOnce();
-        return NextResponse.json(payload);
-      } catch (err) {
-        lastErr = err;
-        console.warn(`[start] attempt ${attempt}/3 failed:`, err instanceof Error ? err.message : err);
-        await cleanupAllActiveSessions();
-        if (attempt < 3) await new Promise((r) => setTimeout(r, 1000));
-      }
-    }
-    console.error("POST /api/start failed after 3 attempts:", lastErr);
-    return NextResponse.json(
-      { detail: lastErr instanceof Error ? lastErr.message : "Internal error" },
-      { status: 500 },
-    );
+    const payload = await attemptStartOnce();
+    return NextResponse.json(payload);
   }
 }
