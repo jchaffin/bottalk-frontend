@@ -218,8 +218,9 @@ export async function POST(request: NextRequest) {
     const body = isRecord(rawBody) ? rawBody : {};
 
     await cleanupAllActiveSessions();
-    // Brief pause to let PCC fully release previous containers before starting new ones.
-    await new Promise((r) => setTimeout(r, 1500));
+    // PCC container teardown is async — give it enough time to fully release
+    // resources before starting new agents, otherwise old and new collide.
+    await new Promise((r) => setTimeout(r, 3000));
 
     let agents: [AgentConfig, AgentConfig] | undefined;
     if (Array.isArray(body.agents) && body.agents.length >= 2) {
@@ -314,8 +315,8 @@ export async function POST(request: NextRequest) {
           room_url: room.url,
           token: token1,
           name: agent1.name,
-          ...(agent1.prompt ? { system_prompt: agent1.prompt } : {}),
-          ...(agent1.voice_id ? { voice_id: agent1.voice_id } : {}),
+          system_prompt: agent1.prompt || "",
+          voice_id: agent1.voice_id || "",
           goes_first: true,
           known_agents: allNames,
           max_turns: maxTurns,
@@ -324,14 +325,14 @@ export async function POST(request: NextRequest) {
         let session2: { sessionId: string };
         try {
           session2 = await startPCCSession({
-            room_url: room.url,
-            token: token2,
-            name: agent2.name,
-            ...(agent2.prompt ? { system_prompt: agent2.prompt } : {}),
-            ...(agent2.voice_id ? { voice_id: agent2.voice_id } : {}),
-            goes_first: false,
-            known_agents: allNames,
-            max_turns: maxTurns,
+          room_url: room.url,
+          token: token2,
+          name: agent2.name,
+          system_prompt: agent2.prompt || "",
+          voice_id: agent2.voice_id || "",
+          goes_first: false,
+          known_agents: allNames,
+          max_turns: maxTurns,
           });
         } catch (err) {
           await stopPCCSession(session1.sessionId);
