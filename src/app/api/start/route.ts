@@ -202,10 +202,9 @@ export async function POST(request: NextRequest) {
     const rawBody = (await request.json().catch(() => null)) as unknown;
     const body = isRecord(rawBody) ? rawBody : {};
 
-    // Always clear any previous runs before starting a new one.
-    // This prevents PCC-AGENT-AT-CAPACITY when sessions/rooms were leaked
-    // (refreshes, crashes, or users hammering Start).
-    await cleanupAllActiveSessions();
+    // NOTE: Do not eagerly clean up all historical sessions here.
+    // It can add significant startup latency. We only perform global cleanup
+    // on explicit capacity errors (see retry path below).
 
     let agents: [AgentConfig, AgentConfig] | undefined;
     if (Array.isArray(body.agents) && body.agents.length >= 2) {
@@ -284,22 +283,20 @@ export async function POST(request: NextRequest) {
           getDailyToken(room.name, true), // browser needs owner to start/receive transcription
         ]);
 
-        // 3. Start both agents on Pipecat Cloud.
-        //    If session2 fails, clean up session1 so we don't leak agents.
-        const session1 = await startPCCSession({
-          room_url: room.url,
-          token: token1,
-          name: agent1.name,
-          ...(agent1.prompt ? { system_prompt: agent1.prompt } : {}),
-          ...(agent1.voice_id ? { voice_id: agent1.voice_id } : {}),
-          goes_first: true,
-          known_agents: allNames,
-          max_turns: maxTurns,
-        });
-
-        let session2: { sessionId: string };
-        try {
-          session2 = await startPCCSession({
+        // 3. Start both agents on Pipecat Cloud in parallel.
+        // Starting sequentially can double cold-start latency for users.
+        const [session1Result, session2Result] = await Promise.allSettled([
+          startPCCSession({
+            room_url: room.url,
+            token: token1,
+            name: agent1.name,
+            ...(agent1.prompt ? { system_prompt: agent1.prompt } : {}),
+            ...(agent1.voice_id ? { voice_id: agent1.voice_id } : {}),
+            goes_first: true,
+            known_agents: allNames,
+            max_turns: maxTurns,
+          }),
+          startPCCSession({
             room_url: room.url,
             token: token2,
             name: agent2.name,
@@ -308,11 +305,26 @@ export async function POST(request: NextRequest) {
             goes_first: false,
             known_agents: allNames,
             max_turns: maxTurns,
-          });
-        } catch (err) {
-          await stopPCCSession(session1.sessionId);
-          throw err;
+          }),
+        ]);
+
+        if (session1Result.status !== "fulfilled" || session2Result.status !== "fulfilled") {
+          const cleanup: Promise<void>[] = [];
+          if (session1Result.status === "fulfilled") cleanup.push(stopPCCSession(session1Result.value.sessionId));
+          if (session2Result.status === "fulfilled") cleanup.push(stopPCCSession(session2Result.value.sessionId));
+          if (cleanup.length > 0) await Promise.allSettled(cleanup);
+
+          const reason =
+            session1Result.status === "rejected"
+              ? session1Result.reason
+              : session2Result.status === "rejected"
+                ? session2Result.reason
+                : new Error("Unknown PCC session start error");
+          throw reason;
         }
+
+        const session1 = session1Result.value;
+        const session2 = session2Result.value;
 
         // 4. Persist session to DB.
         //    If this fails, clean up both agents so they don't run orphaned.
@@ -344,25 +356,24 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    async function startWithReadiness(): Promise<StartPayload> {
+    try {
       const payload = await attemptStartOnce();
+      // Readiness polling can block the HTTP response by up to 15s and makes
+      // startup feel sluggish. Run it in the background for diagnostics only.
       const roomName = payload.roomUrl
         ? payload.roomUrl.replace(/\/+$/, "").split("/").pop() || ""
         : "";
       if (roomName) {
-        await waitForDailyParticipants(roomName, allNames, 15_000).catch(() => {});
+        waitForDailyParticipants(roomName, allNames, 15_000)
+          .then(() => console.log("[start] participants ready:", allNames.join(", ")))
+          .catch(() => {});
       }
-      return payload;
-    }
-
-    try {
-      const payload = await startWithReadiness();
       return NextResponse.json(payload);
     } catch (err) {
       if (isPccAtCapacityError(err)) {
         await cleanupAllActiveSessions();
         await new Promise((r) => setTimeout(r, 1500));
-        const payload = await startWithReadiness();
+        const payload = await attemptStartOnce();
         return NextResponse.json(payload);
       }
       throw err;

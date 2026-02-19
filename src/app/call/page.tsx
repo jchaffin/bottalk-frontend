@@ -27,16 +27,7 @@ export default function CallPage() {
     if (startedRef.current) return;
     startedRef.current = true;
 
-    // IMPORTANT: stopConversation() is destructive (stops all active sessions + deletes rooms).
-    // We must await it before starting a new call, otherwise the stop can race and kill
-    // the room/sessions we just created.
     (async () => {
-      try {
-        await stopConversation();
-      } catch {
-        // best-effort cleanup; don't block call start if stop fails
-      }
-
       try {
         const { roomUrl, token, agentSessions } = await startQuickCall();
         setRoomUrl(roomUrl);
