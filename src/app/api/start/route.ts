@@ -378,5 +378,11 @@ export async function POST(request: NextRequest) {
 
     const payload = await attemptStartOnce();
     return NextResponse.json(payload);
+  } catch (err) {
+    console.error("POST /api/start error:", err);
+    return NextResponse.json(
+      { detail: err instanceof Error ? err.message : "Internal error" },
+      { status: 500 },
+    );
   }
 }
