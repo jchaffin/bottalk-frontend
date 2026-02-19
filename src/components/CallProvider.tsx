@@ -415,6 +415,7 @@ export default function CallProvider({
             delete pendingMetrics[agent];
 
             if (text) {
+              appMessageAgents.add(agent);
               if (!appMessageActive) {
                 appMessageActive = true;
                 linesSnapshot = [];
@@ -519,12 +520,26 @@ export default function CallProvider({
         flushQueued = true;
         requestAnimationFrame(() => {
           flushQueued = false;
-          setLines(linesSnapshot.slice(-MAX_VISIBLE));
+          const merged: TranscriptLine[] = [];
+          for (const line of linesSnapshot) {
+            const last = merged.length > 0 ? merged[merged.length - 1] : null;
+            if (last && last.speaker === line.speaker && !line.interim && !last.interim) {
+              merged[merged.length - 1] = {
+                ...last,
+                text: last.text + " " + line.text,
+                metrics: line.metrics || last.metrics,
+              };
+            } else {
+              merged.push(line);
+            }
+          }
+          setLines(merged.slice(-MAX_VISIBLE));
         });
       }
 
-      // True once we've received at least one app-message "turn" with text.
-      // Suppresses the Deepgram STT fallback so we don't get garbled dupes.
+      // Tracks which agents have delivered app-message turns.
+      // Deepgram STT is only suppressed for agents whose app-messages are working.
+      const appMessageAgents = new Set<string>();
       let appMessageActive = false;
 
       const metricsSnapshot: TurnMetric[] = [];
@@ -538,7 +553,6 @@ export default function CallProvider({
       // suppressed.
 
       call.on("transcription-message", (msg: DailyEventObjectTranscriptionMessage) => {
-        if (appMessageActive) return;
         if (!msg) return;
         const text = msg.text;
         if (!text) return;
@@ -561,6 +575,9 @@ export default function CallProvider({
         if (speaker === "Unknown") {
           console.debug("[transcript] unknown speaker, participantId:", participantId, "map:", { ...participantsRef.current }, "msg keys:", Object.keys(msg));
         }
+
+        // Skip Deepgram STT for agents whose app-message turns are working
+        if (appMessageAgents.has(speaker)) return;
 
         const last = linesSnapshot.length > 0 ? linesSnapshot[linesSnapshot.length - 1] : null;
         if (isFinal) {

@@ -218,6 +218,8 @@ export async function POST(request: NextRequest) {
     const body = isRecord(rawBody) ? rawBody : {};
 
     await cleanupAllActiveSessions();
+    // Brief pause to let PCC fully release previous containers before starting new ones.
+    await new Promise((r) => setTimeout(r, 1500));
 
     let agents: [AgentConfig, AgentConfig] | undefined;
     if (Array.isArray(body.agents) && body.agents.length >= 2) {
@@ -305,20 +307,23 @@ export async function POST(request: NextRequest) {
           getDailyToken(room.name, true, "Observer"), // browser needs owner to start/receive transcription
         ]);
 
-        // 3. Start both agents on Pipecat Cloud in parallel.
-        // Starting sequentially can double cold-start latency for users.
-        const [session1Result, session2Result] = await Promise.allSettled([
-          startPCCSession({
-            room_url: room.url,
-            token: token1,
-            name: agent1.name,
-            ...(agent1.prompt ? { system_prompt: agent1.prompt } : {}),
-            ...(agent1.voice_id ? { voice_id: agent1.voice_id } : {}),
-            goes_first: true,
-            known_agents: allNames,
-            max_turns: maxTurns,
-          }),
-          startPCCSession({
+        // 3. Start agents on Pipecat Cloud sequentially.
+        // Sarah (goes_first) must be started first so she joins and
+        // starts transcription before Mike arrives.
+        const session1 = await startPCCSession({
+          room_url: room.url,
+          token: token1,
+          name: agent1.name,
+          ...(agent1.prompt ? { system_prompt: agent1.prompt } : {}),
+          ...(agent1.voice_id ? { voice_id: agent1.voice_id } : {}),
+          goes_first: true,
+          known_agents: allNames,
+          max_turns: maxTurns,
+        });
+
+        let session2: { sessionId: string };
+        try {
+          session2 = await startPCCSession({
             room_url: room.url,
             token: token2,
             name: agent2.name,
@@ -327,26 +332,11 @@ export async function POST(request: NextRequest) {
             goes_first: false,
             known_agents: allNames,
             max_turns: maxTurns,
-          }),
-        ]);
-
-        if (session1Result.status !== "fulfilled" || session2Result.status !== "fulfilled") {
-          const cleanup: Promise<void>[] = [];
-          if (session1Result.status === "fulfilled") cleanup.push(stopPCCSession(session1Result.value.sessionId));
-          if (session2Result.status === "fulfilled") cleanup.push(stopPCCSession(session2Result.value.sessionId));
-          if (cleanup.length > 0) await Promise.allSettled(cleanup);
-
-          const reason =
-            session1Result.status === "rejected"
-              ? session1Result.reason
-              : session2Result.status === "rejected"
-                ? session2Result.reason
-                : new Error("Unknown PCC session start error");
-          throw reason;
+          });
+        } catch (err) {
+          await stopPCCSession(session1.sessionId);
+          throw err;
         }
-
-        const session1 = session1Result.value;
-        const session2 = session2Result.value;
 
         console.log("[start] PCC sessions created:", {
           agent1: { name: agent1.name, sessionId: session1.sessionId },
@@ -354,18 +344,7 @@ export async function POST(request: NextRequest) {
           room: room.name,
         });
 
-        // 4. Require both agents to be present before returning success.
-        try {
-          await waitForDailyParticipants(room.name, allNames, 8_000);
-        } catch (err) {
-          await Promise.allSettled([
-            stopPCCSession(session1.sessionId),
-            stopPCCSession(session2.sessionId),
-          ]);
-          throw err;
-        }
-
-        // 5. Persist session to DB.
+        // 4. Persist session to DB.
         //    If this fails, clean up both agents so they don't run orphaned.
         try {
           await prisma.session.create({
@@ -395,24 +374,8 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    try {
-      const payload = await attemptStartOnce();
-      return NextResponse.json(payload);
-    } catch (err) {
-      if (isPccAtCapacityError(err)) {
-        await cleanupAllActiveSessions();
-        await new Promise((r) => setTimeout(r, 1500));
-        const payload = await attemptStartOnce();
-        return NextResponse.json(payload);
-      }
-      if (isJoinTimeoutError(err)) {
-        // One retry for transient PCC scheduling lag.
-        await new Promise((r) => setTimeout(r, 700));
-        const payload = await attemptStartOnce();
-        return NextResponse.json(payload);
-      }
-      throw err;
-    }
+    const payload = await attemptStartOnce();
+    return NextResponse.json(payload);
   } catch (err) {
     console.error("POST /api/start error:", err);
     return NextResponse.json(
