@@ -124,7 +124,7 @@ async function waitForDailyParticipants(
       if (allPresent) return;
     }
 
-    await new Promise((r) => setTimeout(r, 750));
+    await new Promise((r) => setTimeout(r, 350));
   }
 
   throw new Error(
@@ -140,6 +140,12 @@ function isPccAtCapacityError(err: unknown): boolean {
     msg.includes("maximum instances reached") ||
     msg.includes("PCC session start failed (429)")
   );
+}
+
+function isJoinTimeoutError(err: unknown): boolean {
+  const msg =
+    err instanceof Error ? err.message : typeof err === "string" ? err : "";
+  return msg.includes("Agents did not join room");
 }
 
 async function cleanupAllActiveSessions(): Promise<void> {
@@ -211,9 +217,7 @@ export async function POST(request: NextRequest) {
     const rawBody = (await request.json().catch(() => null)) as unknown;
     const body = isRecord(rawBody) ? rawBody : {};
 
-    // NOTE: Do not eagerly clean up all historical sessions here.
-    // It can add significant startup latency. We only perform global cleanup
-    // on explicit capacity errors (see retry path below).
+    await cleanupAllActiveSessions();
 
     let agents: [AgentConfig, AgentConfig] | undefined;
     if (Array.isArray(body.agents) && body.agents.length >= 2) {
@@ -344,7 +348,24 @@ export async function POST(request: NextRequest) {
         const session1 = session1Result.value;
         const session2 = session2Result.value;
 
-        // 4. Persist session to DB.
+        console.log("[start] PCC sessions created:", {
+          agent1: { name: agent1.name, sessionId: session1.sessionId },
+          agent2: { name: agent2.name, sessionId: session2.sessionId },
+          room: room.name,
+        });
+
+        // 4. Require both agents to be present before returning success.
+        try {
+          await waitForDailyParticipants(room.name, allNames, 8_000);
+        } catch (err) {
+          await Promise.allSettled([
+            stopPCCSession(session1.sessionId),
+            stopPCCSession(session2.sessionId),
+          ]);
+          throw err;
+        }
+
+        // 5. Persist session to DB.
         //    If this fails, clean up both agents so they don't run orphaned.
         try {
           await prisma.session.create({
@@ -381,6 +402,12 @@ export async function POST(request: NextRequest) {
       if (isPccAtCapacityError(err)) {
         await cleanupAllActiveSessions();
         await new Promise((r) => setTimeout(r, 1500));
+        const payload = await attemptStartOnce();
+        return NextResponse.json(payload);
+      }
+      if (isJoinTimeoutError(err)) {
+        // One retry for transient PCC scheduling lag.
+        await new Promise((r) => setTimeout(r, 700));
         const payload = await attemptStartOnce();
         return NextResponse.json(payload);
       }
