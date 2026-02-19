@@ -414,42 +414,16 @@ export default function CallProvider({
             setLiveMetrics([...metricsSnapshot]);
             delete pendingMetrics[agent];
 
-            if (text) {
-              appMessageAgents.add(agent);
-              if (!appMessageActive) {
-                appMessageActive = true;
-                linesSnapshot = [];
-                nextLineId = 0;
+            // Attach metrics to the most recent Deepgram transcript line for this agent
+            for (let i = linesSnapshot.length - 1; i >= 0; i--) {
+              if (linesSnapshot[i].speaker === agent && !linesSnapshot[i].interim) {
+                linesSnapshot[i] = {
+                  ...linesSnapshot[i],
+                  metrics: { ttfb: metric.ttfb, llm: metric.llm, tts: metric.tts, e2e: metric.e2e },
+                };
+                queueFlush();
+                break;
               }
-              linesSnapshot.push({
-                id: nextLineId++,
-                speaker: agent,
-                text,
-                metrics: {
-                  ttfb: metric.ttfb,
-                  llm: metric.llm,
-                  tts: metric.tts,
-                  e2e: metric.e2e,
-                },
-              });
-              // Re-sort when replayed history arrives out of order
-              if (raw.replay && metricsSnapshot.length > 1) {
-                const tsMap = new Map<string, number>();
-                for (const m of metricsSnapshot) {
-                  if (m.ts != null) tsMap.set(`${m.agent}:${m.turn}`, m.ts);
-                }
-                linesSnapshot.sort((a, b) => {
-                  const aTs = tsMap.get(`${a.speaker}:${metricsSnapshot.find((m) => m.agent === a.speaker)?.turn}`) ?? 0;
-                  const bTs = tsMap.get(`${b.speaker}:${metricsSnapshot.find((m) => m.agent === b.speaker)?.turn}`) ?? 0;
-                  return aTs - bTs;
-                });
-              }
-              queueFlush();
-
-              const cleanLines = linesSnapshot
-                .filter((l) => !l.interim)
-                .map((l) => ({ speaker: l.speaker, text: l.text }));
-              scheduleIncrementalSave(cleanLines, [...metricsSnapshot]);
             }
           }
         } catch { /* ignore malformed app-messages */ }
@@ -537,30 +511,17 @@ export default function CallProvider({
         });
       }
 
-      // Tracks which agents have delivered app-message turns.
-      // Deepgram STT is only suppressed for agents whose app-messages are working.
-      const appMessageAgents = new Set<string>();
-      let appMessageActive = false;
-
       const metricsSnapshot: TurnMetric[] = [];
       const pendingMetrics: Record<string, TurnMetric> = {};
-      // Dedup replayed history events by (agent, turn) to avoid double-counting.
       const seenTurns = new Set<string>();
 
-      // ── Daily transcription (room-level Deepgram) — visual fallback ────
-      // Shows interim STT text until the first app-message "turn" arrives
-      // with clean LLM output. Once app-messages are delivering, this is
-      // suppressed.
-
+      // ── Deepgram transcription (primary transcript source) ──────────
       call.on("transcription-message", (msg: DailyEventObjectTranscriptionMessage) => {
         if (!msg) return;
         const text = msg.text;
         if (!text) return;
-        console.log("[CallProvider] transcription-message:", text.slice(0, 60), "from:", msg.participantId);
         const isFinal = msg.rawResponse?.is_final ?? true;
         const participantId = msg.participantId || "";
-        // Daily emits participantId here (not session_id). Resolve name from our map,
-        // falling back to call.participants() if needed.
         let speaker = participantsRef.current[participantId];
         if (!speaker && participantId) {
           const p = call.participants()[participantId];
@@ -572,20 +533,12 @@ export default function CallProvider({
           }
         }
         speaker = speaker || "Unknown";
-        if (speaker === "Unknown") {
-          console.debug("[transcript] unknown speaker, participantId:", participantId, "map:", { ...participantsRef.current }, "msg keys:", Object.keys(msg));
-        }
-
-        // Skip Deepgram STT for agents whose app-message turns are working
-        if (appMessageAgents.has(speaker)) return;
 
         const last = linesSnapshot.length > 0 ? linesSnapshot[linesSnapshot.length - 1] : null;
         if (isFinal) {
           if (last && last.speaker === speaker && last.interim) {
-            // Replace interim with final
             linesSnapshot[linesSnapshot.length - 1] = { ...last, text, interim: false };
           } else if (last && last.speaker === speaker && !last.interim) {
-            // Same speaker — append to existing line (treat as one "turn")
             linesSnapshot[linesSnapshot.length - 1] = { ...last, text: last.text + " " + text };
           } else {
             linesSnapshot.push({ id: nextLineId++, speaker, text });
@@ -599,6 +552,11 @@ export default function CallProvider({
         }
 
         queueFlush();
+
+        const cleanLines = linesSnapshot
+          .filter((l) => !l.interim)
+          .map((l) => ({ speaker: l.speaker, text: l.text }));
+        scheduleIncrementalSave(cleanLines, [...metricsSnapshot]);
       });
 
       // ── Track lifecycle events ──────────────────────────────────────
