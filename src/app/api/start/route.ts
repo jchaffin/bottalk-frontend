@@ -362,7 +362,7 @@ export async function POST(request: NextRequest) {
           throw err;
         }
 
-        await waitForDailyParticipants(room.name, allNames, 20_000);
+        await waitForDailyParticipants(room.name, allNames, 30_000);
 
         return {
           roomUrl: room.url,
