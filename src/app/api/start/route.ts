@@ -362,8 +362,6 @@ export async function POST(request: NextRequest) {
           throw err;
         }
 
-        await waitForDailyParticipants(room.name, allNames, 30_000);
-
         return {
           roomUrl: room.url,
           token: browserToken,
