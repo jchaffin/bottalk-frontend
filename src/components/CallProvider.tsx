@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ExternalLink, Volume2, VolumeX } from "lucide-react";
 import type {
   DailyCall,
   DailyParticipant,
@@ -111,7 +110,6 @@ export default function CallProvider({
   const [lines, setLines] = useState<TranscriptLine[]>([]);
   const [speakingMap, setSpeakingMap] = useState<Record<string, boolean>>({});
   const [liveMetrics, setLiveMetrics] = useState<TurnMetric[]>([]);
-  const [muted, setMuted] = useState(false);
   /** Live summary generated during the call. */
   const [liveSummary, setLiveSummary] = useState<string | null>(null);
   /** Live KPI outcome from incremental classification. */
@@ -145,8 +143,6 @@ export default function CallProvider({
   onMetricsRef.current = onMetrics;
   const onLeaveRef = useRef(onLeave);
   onLeaveRef.current = onLeave;
-  const mutedRef = useRef(muted);
-  mutedRef.current = muted;
   const titleRef = useRef(title);
   titleRef.current = title;
 
@@ -161,13 +157,6 @@ export default function CallProvider({
 
   const agentNameSet = useRef(new Set(agentNames));
   agentNameSet.current = new Set(agentNames);
-
-  // ── Sync muted state to all <audio> elements ────────────────────────
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    el.querySelectorAll("audio").forEach((a) => { a.muted = muted; });
-  }, [muted]);
 
   // ── Real-time save / embed / classify / summarize ────────────────────
 
@@ -303,7 +292,7 @@ export default function CallProvider({
         // First time seeing this participant's audio — create a new element.
         const el = document.createElement("audio");
         el.autoplay = true;
-        el.muted = mutedRef.current;
+        el.muted = false;
         el.srcObject = new MediaStream([track]);
         containerRef.current?.appendChild(el);
         audioEls[sid] = el;
@@ -639,20 +628,39 @@ export default function CallProvider({
       // ── Join the room ───────────────────────────────────────────────
       call.join({ url: roomUrl, token })
         .then(async () => {
-          console.log("[CallProvider] joined room, starting transcription...");
+          console.log("[CallProvider] joined room, ensuring transcription...");
           setStatus("Connected - listening to the conversation");
-          try {
-            await call.startTranscription({
-              model: "nova-2-general",
-              includeRawResponse: true,
-              extra: { interim_results: true },
-            });
-            console.log("[CallProvider] startTranscription succeeded");
-          } catch (err: unknown) {
-            console.log(
-              "[CallProvider] startTranscription (expected if already active):",
-              err instanceof Error ? err.message : err,
-            );
+
+          const startOptions = {
+            model: "nova-2-general",
+            includeRawResponse: true,
+            extra: { interim_results: true },
+          } as const;
+
+          let started = false;
+          for (let attempt = 1; attempt <= 4; attempt++) {
+            try {
+              await call.startTranscription(startOptions);
+              started = true;
+              console.log("[CallProvider] startTranscription succeeded");
+              break;
+            } catch (err: unknown) {
+              const msg = err instanceof Error ? err.message : String(err);
+              // "already active" is effectively success.
+              if (msg.toLowerCase().includes("already") || msg.toLowerCase().includes("in progress")) {
+                started = true;
+                console.log("[CallProvider] transcription already active");
+                break;
+              }
+              console.warn(`[CallProvider] startTranscription retry ${attempt}/4 failed:`, msg);
+              if (attempt < 4) {
+                await new Promise((r) => setTimeout(r, 700));
+              }
+            }
+          }
+
+          if (!started) {
+            console.error("[CallProvider] unable to start transcription after retries");
           }
         })
         .catch((err) => {
@@ -730,30 +738,14 @@ export default function CallProvider({
         </div>
       )}
 
-      {/* Room link + mute toggle */}
-      <div className="flex items-center gap-3">
-        <a
-          href={roomUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          onClick={() => setMuted(true)}
-          className="inline-flex items-center gap-1 text-xs text-accent hover:text-accent-hover transition-colors"
-        >
-          Daily Room <ExternalLink className="w-3 h-3" />
-        </a>
-        <button
-          onClick={() => setMuted((m) => !m)}
-          className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-lg border transition-colors ${
-            muted
-              ? "text-amber-400 border-amber-400/30 bg-amber-400/10 hover:bg-amber-400/20"
-              : "text-muted border-border hover:bg-surface-elevated"
-          }`}
-          title={muted ? "Unmute app audio" : "Mute app audio (use Daily Room tab instead)"}
-        >
-          {muted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
-          {muted ? "Muted" : "Audio On"}
-        </button>
-      </div>
+      <a
+        href={roomUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="text-xs text-accent hover:text-accent-hover transition-colors"
+      >
+        Daily Room
+      </a>
 
       {/* Live summary */}
       {liveSummary && (
@@ -791,8 +783,6 @@ export default function CallProvider({
         agentNames={agentNames}
       />
 
-      {/* Connection status indicator */}
-      <p className="text-xs text-muted/60 font-mono">{status}</p>
     </div>
   );
 }

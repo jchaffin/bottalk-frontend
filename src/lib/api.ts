@@ -51,6 +51,10 @@ export interface StartOptions {
   agents: [AgentPrompt, AgentPrompt];
 }
 
+function agentTarget(path: string): string {
+  return `${AGENT_API}${path}`;
+}
+
 /** Find the best voice for an agent name. Case-insensitive match. */
 export function voiceForName(name: string): string | undefined {
   const lower = name.toLowerCase();
@@ -78,35 +82,52 @@ export async function generatePrompts(topic: string): Promise<GeneratedPrompts> 
 
 /** Create a Daily room and spawn agents. */
 export async function startConversation(options: StartOptions): Promise<StartResponse> {
-  const res = await fetch(`${AGENT_API}/api/start`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(options),
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.detail || `API error ${res.status}`);
+  const target = agentTarget("/api/start");
+  try {
+    const res = await fetch(target, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(options),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.detail || `API error ${res.status}`);
+    }
+    return res.json();
+  } catch (err) {
+    if (err instanceof TypeError) {
+      throw new Error(`Cannot reach ${target}. Check NEXT_PUBLIC_API_URL or local API server.`);
+    }
+    throw err;
   }
-  return res.json();
 }
 
 /** Quick-start a call using the baked-in Sarah & Mike defaults — no prompts needed. */
 export async function startQuickCall(): Promise<StartResponse> {
-  const res = await fetch(`${AGENT_API}/api/start`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({}),
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.detail || `API error ${res.status}`);
+  const target = agentTarget("/api/start");
+  try {
+    const res = await fetch(target, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.detail || `API error ${res.status}`);
+    }
+    return res.json();
+  } catch (err) {
+    if (err instanceof TypeError) {
+      throw new Error(`Cannot reach ${target}. Check NEXT_PUBLIC_API_URL or local API server.`);
+    }
+    throw err;
   }
-  return res.json();
 }
 
 /** Terminate running agent sessions. */
 export async function stopConversation(): Promise<void> {
-  await fetch(`${AGENT_API}/api/stop`, { method: "POST", keepalive: true });
+  // Best-effort stop; avoid blocking UI transitions.
+  fetch(agentTarget("/api/stop"), { method: "POST", keepalive: true }).catch(() => {});
 }
 
 /** A scenario as stored in the database. */

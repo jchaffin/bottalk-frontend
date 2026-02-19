@@ -49,7 +49,11 @@ async function createDailyRoom(): Promise<{ url: string; name: string }> {
   return { url: data.url, name: data.name };
 }
 
-async function getDailyToken(roomName: string, isOwner = false): Promise<string> {
+async function getDailyToken(
+  roomName: string,
+  isOwner = false,
+  userName?: string,
+): Promise<string> {
   const res = await fetch("https://api.daily.co/v1/meeting-tokens", {
     method: "POST",
     headers: {
@@ -60,6 +64,7 @@ async function getDailyToken(roomName: string, isOwner = false): Promise<string>
       properties: {
         room_name: roomName,
         ...(isOwner ? { is_owner: true } : {}),
+        ...(userName ? { user_name: userName } : {}),
       },
     }),
   });
@@ -121,6 +126,10 @@ async function waitForDailyParticipants(
 
     await new Promise((r) => setTimeout(r, 750));
   }
+
+  throw new Error(
+    `Agents did not join room ${roomName} within ${Math.round(timeoutMs / 1000)}s`,
+  );
 }
 
 function isPccAtCapacityError(err: unknown): boolean {
@@ -213,48 +222,57 @@ export async function POST(request: NextRequest) {
       if (a1 && a2) agents = [a1, a2];
     }
 
-    // Fallback to scenario from DB if no agents array provided
+    // Fallback when no full agents array is provided.
+    // Fast path: empty quick-start payload skips DB lookup entirely.
     if (!agents || agents.length < 2 || !agents[0]?.prompt || !agents[1]?.prompt) {
-      const scenarioSlug =
-        typeof body.scenario === "string" ? body.scenario : DEFAULT_SCENARIO_SLUG;
-      const topic = typeof body.topic === "string" ? body.topic : DEFAULT_TOPIC;
+      const hasExplicitScenario = typeof body.scenario === "string" && body.scenario.length > 0;
+      const hasExplicitTopic = typeof body.topic === "string" && body.topic.length > 0;
 
-      const scenario = await prisma.scenario.findUnique({
-        where: { slug: scenarioSlug },
-      }).catch(() => null);
-
-      if (scenario) {
-        const scenarioAgents = Array.isArray(scenario.agents)
-          ? (scenario.agents as unknown[])
-          : [];
-        const a1 = isRecord(scenarioAgents[0]) ? scenarioAgents[0] : {};
-        const a2 = isRecord(scenarioAgents[1]) ? scenarioAgents[1] : {};
-        const shared = { topic };
-        agents = [
-          {
-            name: typeof a1.name === "string" ? a1.name : "Sarah",
-            prompt: replaceVariables(
-              typeof a1.prompt === "string" ? a1.prompt : "",
-              { ...shared, ...(isRecord(a1.defaults) ? a1.defaults : {}) },
-            ),
-            voice_id: typeof a1.voice_id === "string" ? a1.voice_id : DEFAULT_VOICE_1,
-          },
-          {
-            name: typeof a2.name === "string" ? a2.name : "Mike",
-            prompt: replaceVariables(
-              typeof a2.prompt === "string" ? a2.prompt : "",
-              { ...shared, ...(isRecord(a2.defaults) ? a2.defaults : {}) },
-            ),
-            voice_id: typeof a2.voice_id === "string" ? a2.voice_id : DEFAULT_VOICE_2,
-          },
-        ];
-      } else {
-        // No prompts and no DB scenario — use name-only agents.
-        // The PCC bot has baked-in defaults for Sarah & Mike.
+      if (!hasExplicitScenario && !hasExplicitTopic) {
         agents = [
           { name: "Sarah", prompt: "", voice_id: DEFAULT_VOICE_1 },
           { name: "Mike", prompt: "", voice_id: DEFAULT_VOICE_2 },
         ];
+      } else {
+        const scenarioSlug =
+          typeof body.scenario === "string" ? body.scenario : DEFAULT_SCENARIO_SLUG;
+        const topic = typeof body.topic === "string" ? body.topic : DEFAULT_TOPIC;
+
+        const scenario = await prisma.scenario.findUnique({
+          where: { slug: scenarioSlug },
+        }).catch(() => null);
+
+        if (scenario) {
+          const scenarioAgents = Array.isArray(scenario.agents)
+            ? (scenario.agents as unknown[])
+            : [];
+          const a1 = isRecord(scenarioAgents[0]) ? scenarioAgents[0] : {};
+          const a2 = isRecord(scenarioAgents[1]) ? scenarioAgents[1] : {};
+          const shared = { topic };
+          agents = [
+            {
+              name: typeof a1.name === "string" ? a1.name : "Sarah",
+              prompt: replaceVariables(
+                typeof a1.prompt === "string" ? a1.prompt : "",
+                { ...shared, ...(isRecord(a1.defaults) ? a1.defaults : {}) },
+              ),
+              voice_id: typeof a1.voice_id === "string" ? a1.voice_id : DEFAULT_VOICE_1,
+            },
+            {
+              name: typeof a2.name === "string" ? a2.name : "Mike",
+              prompt: replaceVariables(
+                typeof a2.prompt === "string" ? a2.prompt : "",
+                { ...shared, ...(isRecord(a2.defaults) ? a2.defaults : {}) },
+              ),
+              voice_id: typeof a2.voice_id === "string" ? a2.voice_id : DEFAULT_VOICE_2,
+            },
+          ];
+        } else {
+          agents = [
+            { name: "Sarah", prompt: "", voice_id: DEFAULT_VOICE_1 },
+            { name: "Mike", prompt: "", voice_id: DEFAULT_VOICE_2 },
+          ];
+        }
       }
     }
 
@@ -278,9 +296,9 @@ export async function POST(request: NextRequest) {
         // 2. Generate tokens
         // Agent 1 (goes_first) needs is_owner to call start_transcription.
         const [token1, token2, browserToken] = await Promise.all([
-          getDailyToken(room.name, true),
-          getDailyToken(room.name),
-          getDailyToken(room.name, true), // browser needs owner to start/receive transcription
+          getDailyToken(room.name, true, agent1.name),
+          getDailyToken(room.name, false, agent2.name),
+          getDailyToken(room.name, true, "Observer"), // browser needs owner to start/receive transcription
         ]);
 
         // 3. Start both agents on Pipecat Cloud in parallel.
@@ -358,16 +376,6 @@ export async function POST(request: NextRequest) {
 
     try {
       const payload = await attemptStartOnce();
-      // Readiness polling can block the HTTP response by up to 15s and makes
-      // startup feel sluggish. Run it in the background for diagnostics only.
-      const roomName = payload.roomUrl
-        ? payload.roomUrl.replace(/\/+$/, "").split("/").pop() || ""
-        : "";
-      if (roomName) {
-        waitForDailyParticipants(roomName, allNames, 15_000)
-          .then(() => console.log("[start] participants ready:", allNames.join(", ")))
-          .catch(() => {});
-      }
       return NextResponse.json(payload);
     } catch (err) {
       if (isPccAtCapacityError(err)) {

@@ -65,6 +65,8 @@ export default function RootLayout({
               <nav className="hidden sm:flex items-center gap-1">
                 <Link
                   href="/"
+                  id="nav-dashboard"
+                  data-testid="nav-dashboard"
                   className="text-xs font-medium text-muted hover:text-foreground px-3 py-1.5 rounded-lg hover:bg-surface-elevated transition-all flex items-center gap-1.5"
                 >
                   <LayoutDashboard className="w-3.5 h-3.5" />
@@ -72,6 +74,8 @@ export default function RootLayout({
                 </Link>
                 <Link
                   href="/transcripts"
+                  id="nav-transcripts"
+                  data-testid="nav-transcripts"
                   className="text-xs font-medium text-muted hover:text-foreground px-3 py-1.5 rounded-lg hover:bg-surface-elevated transition-all flex items-center gap-1.5"
                 >
                   <MessageSquare className="w-3.5 h-3.5" />
@@ -79,6 +83,8 @@ export default function RootLayout({
                 </Link>
                 <Link
                   href="/sessions"
+                  id="nav-sessions"
+                  data-testid="nav-sessions"
                   className="text-xs font-medium text-muted hover:text-foreground px-3 py-1.5 rounded-lg hover:bg-surface-elevated transition-all flex items-center gap-1.5"
                 >
                   <Radio className="w-3.5 h-3.5" />
@@ -86,6 +92,9 @@ export default function RootLayout({
                 </Link>
                 <Link
                   href="/call"
+                  id="nav-start-call"
+                  data-testid="nav-start-call"
+                  aria-label="Start Call"
                   className="text-xs font-medium text-white bg-accent hover:bg-accent-hover px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5"
                 >
                   <Phone className="w-3.5 h-3.5" />
@@ -94,15 +103,6 @@ export default function RootLayout({
               </nav>
             </div>
             <div className="flex items-center gap-2">
-              <a
-                href="https://pipecat.daily.co/solid-earwig-harlequin-473/agents"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="hidden sm:flex items-center gap-1.5 text-[10px] text-muted bg-surface-elevated px-2.5 py-1 rounded-lg border border-border hover:bg-border/50 transition-colors cursor-pointer"
-              >
-                <span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />
-                PCC Connected
-              </a>
               <ThemeToggle />
             </div>
           </div>
