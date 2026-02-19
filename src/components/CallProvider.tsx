@@ -414,16 +414,20 @@ export default function CallProvider({
             setLiveMetrics([...metricsSnapshot]);
             delete pendingMetrics[agent];
 
-            // Attach metrics to the most recent Deepgram transcript line for this agent
-            for (let i = linesSnapshot.length - 1; i >= 0; i--) {
-              if (linesSnapshot[i].speaker === agent && !linesSnapshot[i].interim) {
-                linesSnapshot[i] = {
-                  ...linesSnapshot[i],
-                  metrics: { ttfb: metric.ttfb, llm: metric.llm, tts: metric.tts, e2e: metric.e2e },
-                };
+            // Attach metrics to the oldest unannotated Deepgram line for this agent.
+            // If no line exists yet, buffer — applied when the next Deepgram line appears.
+            const metricsObj = { ttfb: metric.ttfb, llm: metric.llm, tts: metric.tts, e2e: metric.e2e };
+            let applied = false;
+            for (let i = 0; i < linesSnapshot.length; i++) {
+              if (linesSnapshot[i].speaker === agent && !linesSnapshot[i].interim && !linesSnapshot[i].metrics) {
+                linesSnapshot[i] = { ...linesSnapshot[i], metrics: metricsObj };
                 queueFlush();
+                applied = true;
                 break;
               }
+            }
+            if (!applied) {
+              pendingLineMetrics[agent] = metricsObj;
             }
           }
         } catch { /* ignore malformed app-messages */ }
@@ -497,12 +501,30 @@ export default function CallProvider({
           const merged: TranscriptLine[] = [];
           for (const line of linesSnapshot) {
             const last = merged.length > 0 ? merged[merged.length - 1] : null;
-            if (last && last.speaker === line.speaker && !line.interim && !last.interim) {
-              merged[merged.length - 1] = {
-                ...last,
-                text: last.text + " " + line.text,
-                metrics: line.metrics || last.metrics,
-              };
+            if (last && last.speaker === line.speaker) {
+              if (line.interim) {
+                // Fold interim into preceding line from same speaker
+                merged[merged.length - 1] = {
+                  ...last,
+                  text: last.text + " " + line.text,
+                  interim: true,
+                };
+              } else if (!last.interim) {
+                // Merge consecutive finals from same speaker
+                merged[merged.length - 1] = {
+                  ...last,
+                  text: last.text + " " + line.text,
+                  metrics: line.metrics || last.metrics,
+                };
+              } else {
+                // Last was interim, this is final — replace
+                merged[merged.length - 1] = {
+                  ...last,
+                  text: last.text.replace(/\s+\S+$/, "") + " " + line.text,
+                  interim: false,
+                  metrics: line.metrics || last.metrics,
+                };
+              }
             } else {
               merged.push(line);
             }
@@ -513,6 +535,7 @@ export default function CallProvider({
 
       const metricsSnapshot: TurnMetric[] = [];
       const pendingMetrics: Record<string, TurnMetric> = {};
+      const pendingLineMetrics: Record<string, TranscriptLine["metrics"]> = {};
       const seenTurns = new Set<string>();
 
       // ── Deepgram transcription (primary transcript source) ──────────
@@ -549,6 +572,18 @@ export default function CallProvider({
           } else {
             linesSnapshot.push({ id: nextLineId++, speaker, text, interim: true });
           }
+        }
+
+        // Apply any buffered metrics that arrived before this line existed
+        if (isFinal && pendingLineMetrics[speaker]) {
+          const last = linesSnapshot[linesSnapshot.length - 1];
+          if (last && last.speaker === speaker && !last.metrics) {
+            linesSnapshot[linesSnapshot.length - 1] = {
+              ...last,
+              metrics: pendingLineMetrics[speaker],
+            };
+          }
+          delete pendingLineMetrics[speaker];
         }
 
         queueFlush();

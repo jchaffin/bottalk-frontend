@@ -218,9 +218,8 @@ export async function POST(request: NextRequest) {
     const body = isRecord(rawBody) ? rawBody : {};
 
     await cleanupAllActiveSessions();
-    // PCC container teardown is async — give it enough time to fully release
-    // resources before starting new agents, otherwise old and new collide.
-    await new Promise((r) => setTimeout(r, 3000));
+    // Brief pause to let PCC fully release previous containers before starting new ones.
+    await new Promise((r) => setTimeout(r, 1500));
 
     let agents: [AgentConfig, AgentConfig] | undefined;
     if (Array.isArray(body.agents) && body.agents.length >= 2) {
@@ -362,8 +361,6 @@ export async function POST(request: NextRequest) {
           ]);
           throw err;
         }
-
-        await waitForDailyParticipants(room.name, allNames, 20_000);
 
         return {
           roomUrl: room.url,
