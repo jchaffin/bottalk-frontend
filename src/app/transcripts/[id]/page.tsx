@@ -12,7 +12,6 @@ import {
   type KpiScores,
   type OutcomeLabel,
   type TurnAnnotation,
-  type TurnRole,
   type TurnSentiment,
 } from "@/lib/kpis";
 
@@ -306,7 +305,7 @@ export default function TranscriptPage() {
           {lines.map((line: { speaker: string; text: string }, idx: number) => {
             const annotation = turnAnnotations[idx];
             // Derive role from speaker — agentNames[0] = agent being evaluated, [1] = user
-            const role: TurnRole = line.speaker === conversation.agentNames[0] ? "agent" : "user";
+            const role = line.speaker === conversation.agentNames[0] ? "agent" : "user";
             const correctedAnn = annotation
               ? { ...annotation, role }
               : undefined;
