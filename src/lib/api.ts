@@ -1,9 +1,8 @@
 import { VOICES, DEFAULT_VOICE_1, DEFAULT_VOICE_2 } from "./config";
 export { VOICES, DEFAULT_VOICE_1, DEFAULT_VOICE_2 };
 
-// Local dev: set NEXT_PUBLIC_API_URL=http://localhost:8000 to hit dev.py
-// Production (Vercel): leave unset, calls same-origin API routes
-const AGENT_API = process.env.NEXT_PUBLIC_API_URL || "";
+// Always call same-origin; /api/start proxies to localhost:8000 when no PCC keys
+const AGENT_API = "";
 
 // Generate-prompts always runs on the Next.js server (not dev.py)
 const NEXT_API = "";
@@ -108,7 +107,7 @@ export async function startConversation(options: StartOptions): Promise<StartRes
     return res.json();
   } catch (err) {
     if (err instanceof TypeError) {
-      throw new Error(`Cannot reach ${target}. Check NEXT_PUBLIC_API_URL or local API server.`);
+      throw new Error(`Cannot reach ${target}. Is the dev server running?`);
     }
     throw err;
   }
@@ -130,7 +129,7 @@ export async function startQuickCall(): Promise<StartResponse> {
     return res.json();
   } catch (err) {
     if (err instanceof TypeError) {
-      throw new Error(`Cannot reach ${target}. Check NEXT_PUBLIC_API_URL or local API server.`);
+      throw new Error(`Cannot reach ${target}. Is the dev server running?`);
     }
     throw err;
   }

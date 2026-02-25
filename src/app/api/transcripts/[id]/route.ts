@@ -80,6 +80,7 @@ export async function PATCH(
 
     // Classify inline (fast) so the response includes the outcome
     let classificationData: Record<string, unknown> = {};
+    let callEndedForResponse: boolean | undefined;
     if (cleanLines && cleanLines.length >= 2) {
       try {
         const agentNames = existing.agentNames as string[];
@@ -90,8 +91,8 @@ export async function PATCH(
             turnAnnotations: classification.turnAnnotations,
           } as unknown as Record<string, unknown>,
           outcome: classification.outcome,
-          callEnded: classification.callEnded,
         };
+        callEndedForResponse = classification.callEnded;
       } catch (err) {
         console.error("Inline classify error:", err);
       }
@@ -112,7 +113,10 @@ export async function PATCH(
       );
     }
 
-    return NextResponse.json(conversation);
+    return NextResponse.json({
+      ...conversation,
+      ...(callEndedForResponse !== undefined && { callEnded: callEndedForResponse }),
+    });
   } catch (err) {
     console.error("PATCH /api/transcripts/[id] error:", err);
     return NextResponse.json(

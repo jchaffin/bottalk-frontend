@@ -26,7 +26,7 @@ POSTGRES_URL=postgres://...                  # Direct TCP (migrations)
 
 # Optional
 PCC_AGENT_NAME=bottalk-agent
-NEXT_PUBLIC_API_URL=http://localhost:8000    # set for local agent dev
+NEXT_PUBLIC_API_URL=http://localhost:8000    # optional; defaults to localhost:8000 when no PCC keys
 ```
 
 ## Scripts

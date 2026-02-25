@@ -28,8 +28,11 @@ async function stopPCCSession(sessionId: string): Promise<void> {
 }
 
 export async function POST() {
-  if (PCC_AGENT_NAME === "local") {
-    await fetch("http://localhost:8000/api/stop", { method: "POST" }).catch(() => {});
+  const agentApiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+  const useLocalAgents = process.env.NEXT_PUBLIC_API_URL || !PCC_API_KEY || PCC_AGENT_NAME === "local";
+  if (useLocalAgents) {
+    const base = agentApiUrl.replace(/\/$/, "");
+    await fetch(`${base}/api/stop`, { method: "POST" }).catch(() => {});
     return NextResponse.json({ status: "stopped" });
   }
 
