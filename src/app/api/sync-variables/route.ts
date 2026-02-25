@@ -1,15 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { syncSharedVariables } from "@/lib/sync-variables";
 
 type AgentVars = Record<string, string>;
 
 function toRecord(v: unknown): AgentVars {
-  if (!v || typeof v !== "object") return {};
-  const acc: AgentVars = {};
+  if (!v || typeof v !== "object" || Array.isArray(v)) return {};
+  const r: AgentVars = {};
   for (const [k, val] of Object.entries(v)) {
-    if (typeof k === "string" && typeof val === "string") acc[k] = val;
+    if (typeof k === "string" && typeof val === "string") r[k] = val;
   }
-  return acc;
+  return r;
 }
 
 /** Shared variable names that get synced across both agents. */
@@ -23,16 +22,9 @@ export async function POST(request: NextRequest) {
   try {
     const raw = await request.json();
     const body = raw as {
-      return NextResponse.json({ detail: "Expected { agent1, agent2 }" }, { status: 400 });
-    }
-
       agent1?: unknown;
-      if (!v || typeof v !== "object" || Array.isArray(v)) return {};
       agent2?: unknown;
       sourceSlot?: string;
-        if (typeof k === "string" && typeof val === "string") r[k] = val;
-      }
-      return r;
     };
 
     const vars = {
