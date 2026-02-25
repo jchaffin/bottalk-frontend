@@ -1,5 +1,5 @@
-/** Variables that should be shared across both agents (e.g. topic). */
-export const SHARED_VARS = ["topic"] as const;
+/** Variables that should be shared across both agents. */
+export const SHARED_VARS = ["topic", "company", "product", "price"] as const;
 
 export interface AgentVariables {
   agent1: Record<string, string>;
@@ -18,11 +18,12 @@ export function syncSharedVariables(
   const a2 = { ...vars.agent2 };
 
   for (const key of SHARED_VARS) {
-    const value = sourceSlot
-      ? (vars[sourceSlot][key] ?? "").trim()
-      : ((a1[key] ?? a2[key] ?? "") as string).trim();
-    a1[key] = value;
-    a2[key] = value;
+    const raw = sourceSlot ? (vars[sourceSlot][key] ?? "") : (a1[key] ?? a2[key] ?? "");
+    const value = String(raw).trim();
+    if (value) {
+      a1[key] = value;
+      a2[key] = value;
+    }
   }
 
   return { agent1: a1, agent2: a2 };

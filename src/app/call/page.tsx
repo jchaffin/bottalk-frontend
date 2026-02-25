@@ -10,7 +10,6 @@ import {
   startConversation,
   stopConversation,
   fetchScenarios,
-  syncVariables,
   voiceForName,
   nameForVoice,
   DEFAULT_VOICE_1,
@@ -19,6 +18,7 @@ import {
   type AgentVariables,
   type Scenario,
 } from "@/lib/api";
+import { syncSharedVariables } from "@/lib/sync-variables";
 import { replaceVariables, DEFAULT_AGENT_COLORS, DEFAULT_AGENT_1_NAME, DEFAULT_AGENT_2_NAME, SYSTEM_AGENT_LABEL, USER_AGENT_LABEL } from "@/lib/config";
 import { getCallSession, clearCallSession } from "@/lib/call-session";
 import ScenarioPicker from "@/components/ScenarioPicker";
@@ -303,9 +303,8 @@ export default function CallPage() {
             if (name === "name") return;
             setVariables((prev) => ({ ...prev, [slot]: { ...prev[slot], [name]: val } }));
           }}
-          onSyncVariables={async (sourceSlot) => {
-            const synced = await syncVariables(variables, sourceSlot);
-            setVariables(synced);
+          onSyncVariables={(sourceSlot) => {
+            setVariables(syncSharedVariables(variables, sourceSlot));
           }}
           onColorChange={(idx, color) => setAgentColors((prev) => { const next = [...prev] as [string, string]; next[idx] = color; return next; })}
           onBack={handleBack}

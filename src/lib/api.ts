@@ -181,23 +181,6 @@ export interface AgentVariables {
   agent2: Record<string, string>;
 }
 
-/** Sync shared variables (topic, etc.) across both agents via backend. */
-export async function syncVariables(
-  vars: AgentVariables,
-  sourceSlot?: "agent1" | "agent2",
-): Promise<AgentVariables> {
-  const res = await fetch(`${NEXT_API}/api/sync-variables`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ ...vars, sourceSlot }),
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.detail || `API error ${res.status}`);
-  }
-  return res.json();
-}
-
 /** Collect default variable values per agent from a scenario. Topic (call subject) can override scenario title via defaults.topic. */
 export function collectDefaults(scenario: Scenario): AgentVariables {
   const shared: Record<string, string> = { topic: scenario.title };
