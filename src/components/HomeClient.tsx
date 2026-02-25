@@ -198,13 +198,13 @@ export default function HomeClient({ scenarios }: HomeClientProps) {
       {/* Header */}
       <div className="text-center space-y-4">
         <a
-          href="https://outrival.com"
+          href="https://bottalk.com"
           target="_blank"
           rel="noopener noreferrer"
           className="inline-block text-4xl sm:text-5xl font-bold tracking-tight text-foreground"
           style={{ fontFamily: "var(--font-display), Duran, sans-serif" }}
         >
-          OutRival <span className="font-light">Technical Project</span>
+          bottalk <span className="font-light">Technical Project</span>
         </a>
         <p className="text-lg text-muted max-w-xl mx-auto">{subtitle}</p>
       </div>
@@ -285,7 +285,7 @@ export default function HomeClient({ scenarios }: HomeClientProps) {
 
       {/* Footer */}
       <p className="text-[11px] text-muted/30 tracking-wide">
-        &copy; {new Date().getFullYear()} Jacob Chaffin &middot; OutRival. All rights reserved.
+        &copy; {new Date().getFullYear()} Jacob Chaffin
       </p>
     </main>
   );

@@ -23,7 +23,7 @@ export const DEFAULT_AGENT_COLORS: [string, string] = ["#686EFF", "#f59e0b"];
 export const DEFAULT_SCENARIO_SLUG = "sales";
 export const DEFAULT_TOPIC = "enterprise software sales";
 
-export const PCC_AGENT_NAME = "outrival-agent";
+export const PCC_AGENT_NAME = "bottalk-agent";
 
 /** Label for app-messages (agent transcript events). Must match RTVI observer default. */
 export const APP_MESSAGE_LABEL = "rtvi-ai";
