@@ -12,7 +12,7 @@ import type {
 import AgentAvatar from "./AgentAvatar";
 import Transcript from "./Transcript";
 import type { TranscriptLine } from "@/lib/api";
-import { DEFAULT_AGENT_COLORS } from "@/lib/config";
+import { DEFAULT_AGENT_COLORS, APP_MESSAGE_LABEL } from "@/lib/config";
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return !!v && typeof v === "object" && !Array.isArray(v);
@@ -368,7 +368,7 @@ export default function CallProvider({
         try {
           const raw = typeof ev.data === "string" ? (JSON.parse(ev.data) as unknown) : ev.data;
           if (!isRecord(raw)) return;
-          if (raw.label !== "metrics") return;
+          if (raw.label !== APP_MESSAGE_LABEL) return;
 
           const agent = typeof raw.agent === "string" ? raw.agent : "Unknown";
           const type = typeof raw.type === "string" ? raw.type : "";
@@ -718,7 +718,7 @@ export default function CallProvider({
               }
               console.warn(`[CallProvider] startTranscription retry ${attempt}/4 failed:`, msg);
               if (attempt < 4) {
-                await new Promise((r) => setTimeout(r, 700));
+                await new Promise((r) => setTimeout(r, 350));
               }
             }
           }
@@ -768,7 +768,7 @@ export default function CallProvider({
       <div ref={containerRef} className="hidden" />
 
       {/* Agent avatars with speaking-pulse indicators */}
-      <div className="flex gap-16">
+      <div className="flex flex-wrap justify-center gap-6 sm:gap-16">
         {agentNames.map((name, idx) => (
           <AgentAvatar
             key={name}
@@ -782,7 +782,7 @@ export default function CallProvider({
 
       {/* Aggregate latency stats */}
       {totalTurns > 0 && (
-        <div className="w-full grid grid-cols-4 gap-3">
+        <div className="w-full grid grid-cols-2 sm:grid-cols-4 gap-3">
           {[
             { label: "Avg TTFB", value: aggTtfb, color: "#686EFF" },
             { label: "Avg LLM", value: aggLlm, color: "#22c55e" },

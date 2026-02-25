@@ -4,7 +4,9 @@ import localFont from "next/font/local";
 import { Schibsted_Grotesk } from "next/font/google";
 import "./globals.css";
 import ThemeToggle from "@/components/ThemeToggle";
-import { LayoutDashboard, MessageSquare, Radio, Phone } from "lucide-react";
+import MobileNav from "@/components/MobileNav";
+import { LayoutDashboard, MessageSquare, Radio } from "lucide-react";
+import QuickStartNavButton from "@/components/QuickStartNavButton";
 
 const duran = localFont({
   src: [
@@ -49,14 +51,14 @@ export default function RootLayout({
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
       </head>
       <body
-        className={`${duran.variable} ${schibstedGrotesk.variable} antialiased bg-background text-foreground min-h-screen`}
+        className={`${duran.variable} ${schibstedGrotesk.variable} antialiased bg-background text-foreground min-h-screen overflow-x-hidden`}
       >
         {/* Top navigation bar */}
         <header className="sticky top-0 z-50 border-b border-border bg-background/80 backdrop-blur-lg">
-          <div className="max-w-7xl mx-auto px-6 h-14 flex items-center justify-between">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
             <div className="flex items-center gap-6">
               <Link
-                href="/"
+                href="/call"
                 className="text-lg font-bold tracking-tight text-foreground"
                 style={{ fontFamily: "var(--font-display), Duran, sans-serif" }}
               >
@@ -90,32 +92,26 @@ export default function RootLayout({
                   <Radio className="w-3.5 h-3.5" />
                   Sessions
                 </Link>
-                <Link
-                  href="/call"
-                  id="nav-start-call"
-                  data-testid="nav-start-call"
-                  aria-label="Start Call"
-                  className="text-xs font-medium text-white bg-accent hover:bg-accent-hover px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5"
-                >
-                  <Phone className="w-3.5 h-3.5" />
-                  Start Call
-                </Link>
+                <QuickStartNavButton />
               </nav>
             </div>
             <div className="flex items-center gap-2">
+              <div className="sm:hidden relative">
+                <MobileNav />
+              </div>
               <ThemeToggle />
             </div>
           </div>
         </header>
 
         {/* Main content */}
-        <main className="max-w-7xl mx-auto px-6 py-8">
+        <main className="max-w-7xl mx-auto px-4 sm:px-6 py-4 sm:py-8">
           {children}
         </main>
 
         {/* Footer */}
         <footer className="border-t border-border/50 mt-12">
-          <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex flex-col sm:flex-row items-center justify-between gap-2">
             <p className="text-[10px] text-muted/40">
               &copy; {new Date().getFullYear()} Jacob Chaffin &middot; bottalk
             </p>

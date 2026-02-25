@@ -7,19 +7,22 @@ export interface AgentVariables {
 }
 
 /**
- * Sync shared variables (topic, etc.) across both agents.
- * Uses agent1 as source of truth when both have values.
+ * Sync shared variables across both agents.
+ * @param sourceSlot - When provided, use this agent's value as source. Otherwise use agent1 ?? agent2.
  */
-export function syncSharedVariables(vars: AgentVariables): AgentVariables {
+export function syncSharedVariables(
+  vars: AgentVariables,
+  sourceSlot?: "agent1" | "agent2",
+): AgentVariables {
   const a1 = { ...vars.agent1 };
   const a2 = { ...vars.agent2 };
 
   for (const key of SHARED_VARS) {
-    const v1 = a1[key];
-    const v2 = a2[key];
-    const synced = (v1 ?? v2 ?? "").trim();
-    a1[key] = synced;
-    a2[key] = synced;
+    const value = sourceSlot
+      ? (vars[sourceSlot][key] ?? "").trim()
+      : ((a1[key] ?? a2[key] ?? "") as string).trim();
+    a1[key] = value;
+    a2[key] = value;
   }
 
   return { agent1: a1, agent2: a2 };

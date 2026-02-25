@@ -24,7 +24,7 @@ export default function ScenarioPicker({
   onCustom,
 }: ScenarioPickerProps) {
   return (
-    <div className="w-full max-w-2xl space-y-4">
+    <div className="w-full min-w-0 max-w-2xl space-y-4">
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         {scenarios.map((s) => {
           const Icon = (s.slug && SCENARIO_ICONS[s.slug]) || Sparkles;

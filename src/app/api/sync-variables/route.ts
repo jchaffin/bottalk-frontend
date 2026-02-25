@@ -23,8 +23,11 @@ export async function POST(request: NextRequest) {
       agent1: toRecord(body.agent1),
       agent2: toRecord(body.agent2),
     };
+    const sourceSlot = (typeof body.sourceSlot === "string" && (body.sourceSlot === "agent1" || body.sourceSlot === "agent2"))
+      ? body.sourceSlot
+      : undefined;
 
-    const synced = syncSharedVariables(vars);
+    const synced = syncSharedVariables(vars, sourceSlot);
     return NextResponse.json(synced);
   } catch (err) {
     console.error("POST /api/sync-variables error:", err);

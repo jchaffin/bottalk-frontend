@@ -18,6 +18,27 @@ function parseLine(v: unknown): TranscriptLineInput {
   };
 }
 
+export async function DELETE(
+  _request: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  try {
+    const { id } = await params;
+    const existing = await prisma.conversation.findUnique({ where: { id } });
+    if (!existing) {
+      return NextResponse.json({ detail: "Not found" }, { status: 404 });
+    }
+    await prisma.conversation.delete({ where: { id } });
+    return NextResponse.json({ ok: true });
+  } catch (err) {
+    console.error("DELETE /api/transcripts/[id] error:", err);
+    return NextResponse.json(
+      { detail: err instanceof Error ? err.message : "Internal error" },
+      { status: 500 },
+    );
+  }
+}
+
 export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> },

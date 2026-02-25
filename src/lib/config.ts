@@ -38,8 +38,8 @@ export const PCC_AGENT_NAME =
 
 export const PCC_AGENT_NAME_LOCAL = "bottalk-agent-local";
 
-/** Label for app-messages (agent transcript events). Must match RTVI observer default. */
-export const APP_MESSAGE_LABEL = "rtvi-ai";
+/** Label for app-messages (latency metrics, transcript events). Used by agents and CallProvider. */
+export const APP_MESSAGE_LABEL = "metrics";
 
 // ---------------------------------------------------------------------------
 // Prompt template variables

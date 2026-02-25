@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import { VOICES, DEFAULT_VOICE_1, DEFAULT_VOICE_2, nameForVoice, type GeneratedPrompts, type AgentVariables } from "@/lib/api";
 import { Loader2, Play } from "lucide-react";
 import TemplateEditor from "./TemplateEditor";
@@ -12,7 +12,7 @@ interface PromptPreviewProps {
   starting?: boolean;
   onUpdate: (slot: "agent1" | "agent2", field: "name" | "role" | "prompt" | "rules" | "voice_id", value: string) => void;
   onVariableChange: (slot: "agent1" | "agent2", name: string, value: string) => void;
-  onSyncVariables: () => void | Promise<void>;
+  onSyncVariables?: (sourceSlot: "agent1" | "agent2") => void | Promise<void>;
   onColorChange: (idx: number, color: string) => void;
   onBack: () => void;
   onStart: () => void;
@@ -32,14 +32,41 @@ export default function PromptPreview({
   onStart,
 }: PromptPreviewProps) {
   const colorRefs = [useRef<HTMLInputElement>(null), useRef<HTMLInputElement>(null)];
+  const [mobileTab, setMobileTab] = useState<"agent1" | "agent2">("agent1");
+  const slots = ["agent1", "agent2"] as const;
   return (
-    <div className="w-full max-w-2xl space-y-6">
+    <div className="w-full min-w-0 max-w-2xl space-y-6 pb-28 sm:pb-0">
+      {/* Mobile: tab switcher */}
+      <div className="sm:hidden flex rounded-xl border border-border bg-surface p-1 gap-1">
+        {slots.map((slot, idx) => (
+          <button
+            key={slot}
+            type="button"
+            onClick={() => setMobileTab(slot)}
+            className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-medium transition-all ${
+              mobileTab === slot ? "bg-foreground text-background" : "text-muted hover:text-foreground"
+            }`}
+          >
+            <span
+              className="w-6 h-6 rounded-full flex items-center justify-center text-xs"
+              style={{ backgroundColor: agentColors[idx], color: "white" }}
+            >
+              {prompts[slot].name?.[0]?.toUpperCase() || idx + 1}
+            </span>
+            {prompts[slot].name || `Agent ${idx + 1}`}
+          </button>
+        ))}
+      </div>
+
       <div className="card p-5 overflow-visible">
         {/* Row-based grid so Rules and Voice align across columns */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-4 sm:gap-y-0 sm:items-start">
-          {/* Row 1: Headers */}
-          {(["agent1", "agent2"] as const).map((slot, idx) => (
-            <div key={`header-${slot}`} className="flex items-center gap-3">
+          {/* Row 1: Headers — hidden on mobile (tab shows name/avatar); on desktop show both */}
+          {slots.map((slot, idx) => (
+            <div
+              key={`header-${slot}`}
+              className="hidden sm:flex items-center gap-3"
+            >
               <div
                 role="button"
                 tabIndex={0}
@@ -67,44 +94,53 @@ export default function PromptPreview({
                   value={prompts[slot].role}
                   onChange={(e) => onUpdate(slot, "role", e.target.value)}
                   disabled={starting}
-                  placeholder="Role"
+                  placeholder="e.g. Sales rep, Support agent"
                   className="input-inline text-xs text-muted"
                 />
               </div>
             </div>
           ))}
-          {/* Row 2: Prompts */}
-          {(["agent1", "agent2"] as const).map((slot) => (
-            <div key={`prompt-${slot}`} className="min-h-[140px] sm:pt-4">
-              <label className="text-xs text-muted mb-1 block">Prompt</label>
+          {/* Row 2: Prompts — on mobile only show active tab */}
+          {slots.map((slot) => (
+            <div
+              key={`prompt-${slot}`}
+              className={`min-h-[100px] sm:min-h-[140px] sm:pt-4 ${mobileTab !== slot ? "hidden sm:block" : ""}`}
+            >
+              <label className="text-sm font-medium text-foreground mb-1.5 block">System prompt</label>
               <TemplateEditor
                 value={prompts[slot].prompt}
                 variables={variables[slot]}
                 onTextChange={(text) => onUpdate(slot, "prompt", text)}
                 onVariableChange={(name, val) => onVariableChange(slot, name, val)}
-                onSyncVariables={onSyncVariables}
+                onSyncVariables={onSyncVariables ? () => onSyncVariables(slot) : undefined}
                 disabled={starting}
               />
             </div>
           ))}
-          {/* Row 3: Rules - aligned */}
-          {(["agent1", "agent2"] as const).map((slot) => (
-            <div key={`rules-${slot}`} className="sm:pt-4">
-              <label className="text-xs text-muted mb-1 block">Rules</label>
+          {/* Row 3: Rules - aligned — on mobile only show active tab */}
+          {slots.map((slot) => (
+            <div
+              key={`rules-${slot}`}
+              className={`pt-6 sm:pt-4 ${mobileTab !== slot ? "hidden sm:block" : ""}`}
+            >
+              <label className="text-sm font-medium text-foreground mb-1.5 block">Conversation rules</label>
               <textarea
                 value={prompts[slot].rules ?? ""}
                 onChange={(e) => onUpdate(slot, "rules", e.target.value)}
                 disabled={starting}
-                placeholder="e.g. - 2-3 short sentences per turn&#10;- Be empathetic and solution-oriented"
-                rows={4}
+                placeholder="e.g.&#10;• 2–3 short sentences per turn&#10;• Be empathetic and solution-oriented"
+                rows={6}
                 className="input-bordered w-full resize-none font-mono text-xs"
               />
             </div>
           ))}
-          {/* Row 4: Voice - aligned (name is derived from voice) */}
-          {(["agent1", "agent2"] as const).map((slot) => (
-            <div key={`voice-${slot}`} className="sm:pt-4 relative z-10">
-              <label className="text-xs text-muted mb-1 block">Voice</label>
+          {/* Row 4: Voice - aligned — on mobile only show active tab */}
+          {slots.map((slot) => (
+            <div
+              key={`voice-${slot}`}
+              className={`sm:pt-4 relative z-10 ${mobileTab !== slot ? "hidden sm:block" : ""}`}
+            >
+              <label className="text-sm font-medium text-foreground mb-1.5 block">Voice</label>
               <select
                 value={prompts[slot].voice_id || (slot === "agent1" ? DEFAULT_VOICE_1 : DEFAULT_VOICE_2)}
                 onChange={(e) => {
@@ -124,7 +160,7 @@ export default function PromptPreview({
         </div>
       </div>
 
-      <div className="flex items-center justify-between">
+      <div className="sm:relative fixed sm:static bottom-0 left-0 right-0 flex items-center justify-between gap-3 p-4 sm:p-0 bg-background/95 sm:bg-transparent backdrop-blur-sm sm:backdrop-blur-none border-t sm:border-t-0 border-border z-40">
         <button
           onClick={onBack}
           disabled={starting}

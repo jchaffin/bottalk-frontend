@@ -113,26 +113,40 @@ export async function startConversation(options: StartOptions): Promise<StartRes
   }
 }
 
-/** Quick-start a call using the baked-in System & User defaults — no prompts needed. */
-export async function startQuickCall(): Promise<StartResponse> {
-  const target = agentTarget("/api/start");
-  try {
-    const res = await fetch(target, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
-    });
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      throw new Error(body.detail || `API error ${res.status}`);
-    }
-    return res.json();
-  } catch (err) {
-    if (err instanceof TypeError) {
-      throw new Error(`Cannot reach ${target}. Is the dev server running?`);
-    }
-    throw err;
+/** Quick start: fetch scenarios, pick default (sales), start conversation. Returns session for /call/active. */
+export async function quickStartConversation(): Promise<{
+  roomUrl: string;
+  token: string;
+  agentSessions?: string[];
+  agentNames: [string, string];
+  agentColors: [string, string];
+  scenarioLabel: string | null;
+}> {
+  const scenarios = await fetchScenarios();
+  const defaultScenario = scenarios.find((s) => s.slug === "sales") ?? scenarios[0];
+  if (!defaultScenario) {
+    throw new Error("No scenarios. Run: npm run db:seed");
   }
+  const promptsResolved = scenarioToPrompts(defaultScenario);
+  const variablesResolved = collectDefaults(defaultScenario);
+  const fullPrompt1 = systemPromptFromAgent(promptsResolved.agent1);
+  const fullPrompt2 = systemPromptFromAgent(promptsResolved.agent2);
+  const { replaceVariables } = await import("./config");
+  const resolvedPrompt1 = replaceVariables(fullPrompt1, variablesResolved.agent1);
+  const resolvedPrompt2 = replaceVariables(fullPrompt2, variablesResolved.agent2);
+  const res = await startConversation({
+    agents: [
+      { name: promptsResolved.agent1.name, role: promptsResolved.agent1.role, prompt: resolvedPrompt1, voice_id: promptsResolved.agent1.voice_id || DEFAULT_VOICE_1 },
+      { name: promptsResolved.agent2.name, role: promptsResolved.agent2.role, prompt: resolvedPrompt2, voice_id: promptsResolved.agent2.voice_id || DEFAULT_VOICE_2 },
+    ],
+  });
+  const { DEFAULT_AGENT_COLORS } = await import("./config");
+  return {
+    ...res,
+    agentNames: [promptsResolved.agent1.name, promptsResolved.agent2.name],
+    agentColors: DEFAULT_AGENT_COLORS,
+    scenarioLabel: defaultScenario.title,
+  };
 }
 
 /** Terminate running agent sessions. */
@@ -168,11 +182,14 @@ export interface AgentVariables {
 }
 
 /** Sync shared variables (topic, etc.) across both agents via backend. */
-export async function syncVariables(vars: AgentVariables): Promise<AgentVariables> {
+export async function syncVariables(
+  vars: AgentVariables,
+  sourceSlot?: "agent1" | "agent2",
+): Promise<AgentVariables> {
   const res = await fetch(`${NEXT_API}/api/sync-variables`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(vars),
+    body: JSON.stringify({ ...vars, sourceSlot }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -272,14 +289,34 @@ export async function saveTranscript(
   return res.json();
 }
 
-/** Fetch saved conversations. */
-export async function fetchConversations(): Promise<SavedConversation[]> {
-  const res = await fetch(`${NEXT_API}/api/transcripts`);
+/** Paginated response for conversations. */
+export interface FetchConversationsResponse {
+  conversations: SavedConversation[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+}
+
+/** Fetch saved conversations with pagination. */
+export async function fetchConversations(opts?: { page?: number; limit?: number }): Promise<FetchConversationsResponse> {
+  const page = opts?.page ?? 1;
+  const limit = opts?.limit ?? 20;
+  const res = await fetch(`${NEXT_API}/api/transcripts?page=${page}&limit=${limit}`);
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.detail || `API error ${res.status}`);
   }
   return res.json();
+}
+
+/** Delete a conversation. */
+export async function deleteConversation(id: string): Promise<void> {
+  const res = await fetch(`${NEXT_API}/api/transcripts/${id}`, { method: "DELETE" });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `API error ${res.status}`);
+  }
 }
 
 /** Fetch a single conversation by ID. */

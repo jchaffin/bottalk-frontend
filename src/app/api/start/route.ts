@@ -92,7 +92,7 @@ export async function POST(request: NextRequest) {
     }
 
     await cleanupSessions();
-    await new Promise((r) => setTimeout(r, 1500));
+    await new Promise((r) => setTimeout(r, 300)); // Brief pause for cleanup propagation
 
     const [agent1, agent2] = await resolveAgents(body);
     const allNames = [agent1.name, agent2.name];
@@ -124,19 +124,18 @@ export async function POST(request: NextRequest) {
         getToken(true, "Observer"),
       ]);
 
-      session1 = await startPCCSession({
-        room_url: room.url,
-        token: t1.token,
-        name: agent1.name,
-        system_prompt: agent1.prompt || "",
-        voice_id: agent1.voice_id || DEFAULT_VOICE_1,
-        goes_first: true,
-        known_agents: allNames,
-        max_turns: maxTurns,
-      });
-
-      try {
-        session2 = await startPCCSession({
+      const [r1, r2] = await Promise.allSettled([
+        startPCCSession({
+          room_url: room.url,
+          token: t1.token,
+          name: agent1.name,
+          system_prompt: agent1.prompt || "",
+          voice_id: agent1.voice_id || DEFAULT_VOICE_1,
+          goes_first: true,
+          known_agents: allNames,
+          max_turns: maxTurns,
+        }),
+        startPCCSession({
           room_url: room.url,
           token: t2.token,
           name: agent2.name,
@@ -145,11 +144,16 @@ export async function POST(request: NextRequest) {
           goes_first: false,
           known_agents: allNames,
           max_turns: maxTurns,
-        });
-      } catch (err) {
-        await stopPCCSession(session1.sessionId);
-        throw err;
+        }),
+      ]);
+      if (r1.status === "rejected" || r2.status === "rejected") {
+        if (r1.status === "fulfilled") await stopPCCSession(r1.value.sessionId);
+        if (r2.status === "fulfilled") await stopPCCSession(r2.value.sessionId);
+        const failed = (r1.status === "rejected" ? r1 : r2) as PromiseRejectedResult;
+        throw failed.reason;
       }
+      session1 = r1.value;
+      session2 = r2.value;
 
       await prisma.session.create({
         data: {

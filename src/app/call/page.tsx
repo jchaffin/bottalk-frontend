@@ -20,7 +20,6 @@ import {
   type Scenario,
 } from "@/lib/api";
 import { replaceVariables, DEFAULT_AGENT_COLORS, DEFAULT_AGENT_1_NAME, DEFAULT_AGENT_2_NAME, SYSTEM_AGENT_LABEL, USER_AGENT_LABEL } from "@/lib/config";
-import { getDefaultScenario } from "@/lib/default-scenario";
 import ScenarioPicker from "@/components/ScenarioPicker";
 import CustomTopicForm from "@/components/CustomTopicForm";
 import PromptPreview from "@/components/PromptPreview";
@@ -110,6 +109,41 @@ export default function CallPage() {
     }
   }
 
+  async function handleQuickStart() {
+    setError(null);
+    setPhase("starting");
+    const defaultScenario = scenarios.find((s) => s.slug === "sales") ?? scenarios[0];
+    if (!defaultScenario) {
+      setError("No scenarios. Run: npm run db:seed");
+      setPhase("idle");
+      return;
+    }
+    const promptsResolved = scenarioToPrompts(defaultScenario);
+    const variablesResolved = collectDefaults(defaultScenario);
+    const fullPrompt1 = systemPromptFromAgent(promptsResolved.agent1);
+    const fullPrompt2 = systemPromptFromAgent(promptsResolved.agent2);
+    const resolvedPrompt1 = replaceVariables(fullPrompt1, variablesResolved.agent1);
+    const resolvedPrompt2 = replaceVariables(fullPrompt2, variablesResolved.agent2);
+    try {
+      const res = await startConversation({
+        agents: [
+          { name: promptsResolved.agent1.name, role: promptsResolved.agent1.role, prompt: resolvedPrompt1, voice_id: promptsResolved.agent1.voice_id || DEFAULT_VOICE_1 },
+          { name: promptsResolved.agent2.name, role: promptsResolved.agent2.role, prompt: resolvedPrompt2, voice_id: promptsResolved.agent2.voice_id || DEFAULT_VOICE_2 },
+        ],
+      });
+      setRoomUrl(res.roomUrl);
+      setToken(res.token);
+      setAgentSessions(res.agentSessions);
+      setScenarioLabel(defaultScenario.title);
+      setPrompts(promptsResolved);
+      setVariables(variablesResolved);
+      setPhase("active");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to start");
+      setPhase("idle");
+    }
+  }
+
   async function handleStart() {
     if (!prompts) return;
     setError(null);
@@ -132,45 +166,6 @@ export default function CallPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to start");
       setPhase("preview");
-    }
-  }
-
-  async function handleQuickStart() {
-    setError(null);
-    setPhase("starting");
-    const defaultScenario = getDefaultScenario();
-    const promptsResolved = scenarioToPrompts(defaultScenario);
-    const variables = collectDefaults(defaultScenario);
-    const fullPrompt1 = systemPromptFromAgent(promptsResolved.agent1);
-    const fullPrompt2 = systemPromptFromAgent(promptsResolved.agent2);
-    const resolvedPrompt1 = replaceVariables(fullPrompt1, variables.agent1);
-    const resolvedPrompt2 = replaceVariables(fullPrompt2, variables.agent2);
-    try {
-      const res = await startConversation({
-        agents: [
-          {
-            name: promptsResolved.agent1.name,
-            role: promptsResolved.agent1.role,
-            prompt: resolvedPrompt1,
-            voice_id: promptsResolved.agent1.voice_id || DEFAULT_VOICE_1,
-          },
-          {
-            name: promptsResolved.agent2.name,
-            role: promptsResolved.agent2.role,
-            prompt: resolvedPrompt2,
-            voice_id: promptsResolved.agent2.voice_id || DEFAULT_VOICE_2,
-          },
-        ],
-      });
-      setRoomUrl(res.roomUrl);
-      setToken(res.token);
-      setAgentSessions(res.agentSessions);
-      setScenarioLabel(defaultScenario.title);
-      setPrompts(promptsResolved);
-      setPhase("active");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to start");
-      setPhase("idle");
     }
   }
 
@@ -214,7 +209,6 @@ export default function CallPage() {
     const oldName = prompts[slot].name;
     const updated = { ...prompts[slot], [field]: value };
 
-    // Name is linked to voice — when voice changes, update name
     if (field === "voice_id") {
       const voiceName = nameForVoice(value);
       if (voiceName) {
@@ -233,17 +227,16 @@ export default function CallPage() {
     : [SYSTEM_AGENT_LABEL, USER_AGENT_LABEL];
 
   const subtitle =
-    phase === "active" && scenarioLabel
+    phase === "starting" && scenarioLabel
       ? scenarioLabel
       : phase === "preview" || phase === "starting"
         ? scenarioLabel
           ? `${agentNames[0]} & ${agentNames[1]} — ${scenarioLabel}`
           : `${agentNames[0]} & ${agentNames[1]}`
-        : "Pick a scenario, customize prompts, or describe your own — then watch two AI voice agents have a real-time conversation.";
+        : "Choose a scenario or describe your own topic.";
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-[60vh] px-6 py-16 gap-10">
-      {/* Header */}
+    <div className="w-full min-w-0 flex flex-col items-center justify-start min-h-[50vh] px-0 sm:px-6 py-6 sm:py-16 gap-6 sm:gap-10">
       <div className="text-center space-y-4">
         <h1 className="text-3xl sm:text-4xl font-bold tracking-tight text-foreground">
           Start a Call
@@ -251,7 +244,6 @@ export default function CallPage() {
         <p className="text-lg text-muted max-w-xl mx-auto">{subtitle}</p>
       </div>
 
-      {/* Quick Start */}
       {phase === "idle" && !showCustom && (
         <button
           onClick={handleQuickStart}
@@ -261,7 +253,6 @@ export default function CallPage() {
         </button>
       )}
 
-      {/* Scenario picker */}
       {(phase === "idle" || phase === "generating") && !showCustom && (
         <ScenarioPicker
           scenarios={scenarios}
@@ -271,7 +262,6 @@ export default function CallPage() {
         />
       )}
 
-      {/* Custom topic form */}
       {(phase === "idle" || phase === "generating") && showCustom && (
         <CustomTopicForm
           topic={customTopic}
@@ -282,7 +272,6 @@ export default function CallPage() {
         />
       )}
 
-      {/* Prompt editor */}
       {(phase === "preview" || phase === "starting") && prompts && (
         <PromptPreview
           prompts={prompts}
@@ -291,11 +280,11 @@ export default function CallPage() {
           starting={phase === "starting"}
           onUpdate={updateAgent}
           onVariableChange={(slot, name, val) => {
+            if (name === "name") return;
             setVariables((prev) => ({ ...prev, [slot]: { ...prev[slot], [name]: val } }));
-            // name is linked to voice — don't update agent from template name edits
           }}
-          onSyncVariables={async () => {
-            const synced = await syncVariables(variables);
+          onSyncVariables={async (sourceSlot) => {
+            const synced = await syncVariables(variables, sourceSlot);
             setVariables(synced);
           }}
           onColorChange={(idx, color) => setAgentColors((prev) => { const next = [...prev] as [string, string]; next[idx] = color; return next; })}
@@ -304,8 +293,7 @@ export default function CallPage() {
         />
       )}
 
-      {/* Active call */}
-      {(phase === "active" || phase === "starting") && ((roomUrl && token) || phase === "starting") && (
+      {(phase === "starting" || phase === "active") && ((roomUrl && token) || phase === "starting") && (
         <ActiveCall
           roomUrl={roomUrl}
           token={token}
@@ -327,7 +315,6 @@ export default function CallPage() {
         />
       )}
 
-      {/* Error */}
       {error && (
         <div className="px-4 py-2.5 rounded-xl bg-error-bg border border-error-border">
           <p className="text-danger text-sm">{error}</p>

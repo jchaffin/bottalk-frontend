@@ -2,9 +2,9 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
-import { ExternalLink } from "lucide-react";
-import { fetchConversation } from "@/lib/api";
+import { useParams, useRouter } from "next/navigation";
+import { ExternalLink, Trash2 } from "lucide-react";
+import { fetchConversation, deleteConversation } from "@/lib/api";
 import {
   KPI_DEFINITIONS,
   OUTCOME_LABELS,
@@ -144,6 +144,8 @@ export default function TranscriptPage() {
   const params = useParams();
   const id = params.id as string;
   const [conversation, setConversation] = useState<ConversationView | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -226,12 +228,31 @@ export default function TranscriptPage() {
               )}
             </p>
           </div>
-          <Link
-            href="/"
-            className="text-sm font-medium text-muted hover:text-foreground transition-colors"
-          >
-            ← Dashboard
-          </Link>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={async () => {
+                if (!confirm("Delete this transcript? This cannot be undone.")) return;
+                setDeleting(true);
+                try {
+                  await deleteConversation(conversation.id);
+                  router.push("/transcripts");
+                } catch {
+                  setDeleting(false);
+                }
+              }}
+              disabled={deleting}
+              className="p-2 rounded-lg text-muted hover:text-danger hover:bg-error-bg transition-colors disabled:opacity-50 flex items-center gap-1.5 text-sm"
+            >
+              <Trash2 className="w-4 h-4" />
+              {deleting ? "Deleting..." : "Delete"}
+            </button>
+            <Link
+              href="/transcripts"
+              className="text-sm font-medium text-muted hover:text-foreground transition-colors"
+            >
+              ← Transcripts
+            </Link>
+          </div>
         </div>
 
         {/* KPI Score Bars */}

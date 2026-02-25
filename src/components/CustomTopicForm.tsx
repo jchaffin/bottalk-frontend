@@ -20,7 +20,7 @@ export default function CustomTopicForm({
   onBack,
 }: CustomTopicFormProps) {
   return (
-    <div className="w-full max-w-xl space-y-4">
+    <div className="w-full min-w-0 max-w-xl space-y-4">
       <textarea
         value={topic}
         onChange={(e) => onTopicChange(e.target.value.slice(0, TOPIC_MAX_LENGTH))}

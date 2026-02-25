@@ -103,6 +103,7 @@ export default function TemplateEditor({
   const handleChipClick = useCallback(
     (varName: string, chipEl: HTMLSpanElement) => {
       if (disabled) return;
+      if (varName === "name") return; // Name is derived from voice — not editable
       const containerRect = containerRef.current?.getBoundingClientRect();
       const chipRect = chipEl.getBoundingClientRect();
       if (containerRect) {
@@ -141,7 +142,7 @@ export default function TemplateEditor({
         <div
           ref={renderedRef}
           onDoubleClick={enterEdit}
-          className="w-full h-full rounded-lg bg-surface-elevated border border-border p-4 text-xs text-foreground/80 leading-loose min-h-[20rem] cursor-text whitespace-pre-wrap break-words transition-all hover:border-border/80"
+          className="w-full h-full rounded-lg bg-surface-elevated border border-border p-4 text-xs text-foreground/80 leading-loose min-h-[8rem] sm:min-h-[20rem] cursor-text whitespace-pre-wrap break-words transition-all hover:border-border/80"
         >
           {segments.map((segment, i) => {
             const match = segment.match(VAR_TOKEN_RE);
@@ -153,9 +154,7 @@ export default function TemplateEditor({
               return (
                 <span
                   key={`${varName}-${i}`}
-                  onClick={(e) =>
-                    handleChipClick(varName, e.currentTarget)
-                  }
+                  onClick={(e) => varName !== "name" && handleChipClick(varName, e.currentTarget)}
                   title={
                     hasValue
                       ? `${varName} = ${displayValue}`
@@ -163,12 +162,13 @@ export default function TemplateEditor({
                   }
                   className={`
                     inline-flex items-center gap-0.5 px-1.5 py-0.5 mx-0.5 rounded-md
-                    text-[11px] leading-none font-medium cursor-pointer select-none
-                    transition-all hover:scale-105
+                    text-[11px] leading-none font-medium select-none
+                    transition-all
+                    ${varName === "name" ? "cursor-default" : "cursor-pointer hover:scale-105"}
                     ${
                       hasValue
-                        ? "bg-accent/15 text-accent border border-accent/25 hover:bg-accent/25"
-                        : "bg-accent-agent2/15 text-accent-agent2 border border-accent-agent2/25 hover:bg-accent-agent2/25"
+                        ? "bg-accent/15 text-foreground border border-accent/30 hover:bg-accent/25"
+                        : "bg-accent-agent2/15 text-foreground border border-accent-agent2/30 hover:bg-accent-agent2/25"
                     }
                   `}
                 >
