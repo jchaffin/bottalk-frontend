@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ExternalLink } from "lucide-react";
+import { ExternalLink, Trash2 } from "lucide-react";
 
 interface ConversationRow {
   id: string;
@@ -16,7 +16,9 @@ interface ConversationRow {
 interface SessionsTableProps {
   conversations: ConversationRow[];
   onEmbed?: (conversationId: string) => void;
+  onDelete?: (conversationId: string) => void;
   embedding?: string | null;
+  deleting?: string | null;
 }
 
 const OUTCOME_BADGE: Record<
@@ -78,7 +80,9 @@ function formatDate(iso: string): string {
 export default function SessionsTable({
   conversations,
   onEmbed,
+  onDelete,
   embedding,
+  deleting,
 }: SessionsTableProps) {
   if (!conversations.length) {
     return (
@@ -160,15 +164,33 @@ export default function SessionsTable({
                   {formatDate(c.createdAt)}
                 </td>
                 <td className="px-5 py-3">
-                  {!c.outcome && onEmbed && (
-                    <button
-                      onClick={() => onEmbed(c.id)}
-                      disabled={embedding === c.id}
-                      className="text-[11px] font-medium px-2.5 py-1 rounded-lg bg-accent/10 text-accent hover:bg-accent/20 transition-colors disabled:opacity-50"
+                  <div className="flex items-center gap-2">
+                    <Link
+                      href={`/transcripts/${c.id}`}
+                      className="text-[11px] font-medium px-2.5 py-1 rounded-lg bg-surface-elevated text-foreground hover:bg-surface transition-colors border border-border"
                     >
-                      {embedding === c.id ? "Embedding..." : "Embed & Classify"}
-                    </button>
-                  )}
+                      View
+                    </Link>
+                    {!c.outcome && onEmbed && (
+                      <button
+                        onClick={() => onEmbed(c.id)}
+                        disabled={embedding === c.id}
+                        className="text-[11px] font-medium px-2.5 py-1 rounded-lg bg-accent/10 text-accent hover:bg-accent/20 transition-colors disabled:opacity-50"
+                      >
+                        {embedding === c.id ? "Embedding..." : "Embed & Classify"}
+                      </button>
+                    )}
+                    {onDelete && (
+                      <button
+                        onClick={() => onDelete(c.id)}
+                        disabled={deleting === c.id}
+                        className="p-1.5 rounded-lg text-muted hover:text-danger hover:bg-error-bg transition-colors disabled:opacity-50"
+                        aria-label="Delete"
+                      >
+                        {deleting === c.id ? <span className="text-[10px]">...</span> : <Trash2 className="w-3.5 h-3.5" />}
+                      </button>
+                    )}
+                  </div>
                 </td>
               </tr>
             ))}

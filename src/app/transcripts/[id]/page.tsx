@@ -2,9 +2,9 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
-import { ExternalLink } from "lucide-react";
-import { fetchConversation } from "@/lib/api";
+import { useParams, useRouter } from "next/navigation";
+import { ExternalLink, Trash2 } from "lucide-react";
+import { fetchConversation, deleteConversation } from "@/lib/api";
 import {
   KPI_DEFINITIONS,
   OUTCOME_LABELS,
@@ -65,10 +65,21 @@ function OutcomeBadge({ outcome }: { outcome: OutcomeLabel }) {
   );
 }
 
+const ROLE_BADGE: Record<string, { text: string; className: string }> = {
+  agent: { text: "Agent", className: "text-accent-agent1 bg-accent-agent1/10 border-accent-agent1/20" },
+  user: { text: "User", className: "text-accent-agent2 bg-accent-agent2/10 border-accent-agent2/20" },
+};
+
 function TurnAnnotationBadge({ annotation }: { annotation: TurnAnnotation }) {
+  const roleBadge = annotation.role ? ROLE_BADGE[annotation.role] : null;
   return (
     <div className="flex items-center gap-1.5 mt-1">
       <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${SENTIMENT_DOT[annotation.sentiment]}`} />
+      {roleBadge && (
+        <span className={`text-[9px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded border ${roleBadge.className}`}>
+          {roleBadge.text}
+        </span>
+      )}
       <span className="text-xs text-muted/80 italic">{annotation.label}</span>
       {annotation.relevantKpis.length > 0 && (
         <span className="text-[10px] text-muted/50 font-mono">
@@ -133,6 +144,8 @@ export default function TranscriptPage() {
   const params = useParams();
   const id = params.id as string;
   const [conversation, setConversation] = useState<ConversationView | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -215,12 +228,31 @@ export default function TranscriptPage() {
               )}
             </p>
           </div>
-          <Link
-            href="/"
-            className="text-sm font-medium text-muted hover:text-foreground transition-colors"
-          >
-            ← Dashboard
-          </Link>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={async () => {
+                if (!confirm("Delete this transcript? This cannot be undone.")) return;
+                setDeleting(true);
+                try {
+                  await deleteConversation(conversation.id);
+                  router.push("/transcripts");
+                } catch {
+                  setDeleting(false);
+                }
+              }}
+              disabled={deleting}
+              className="p-2 rounded-lg text-muted hover:text-danger hover:bg-error-bg transition-colors disabled:opacity-50 flex items-center gap-1.5 text-sm"
+            >
+              <Trash2 className="w-4 h-4" />
+              {deleting ? "Deleting..." : "Delete"}
+            </button>
+            <Link
+              href="/transcripts"
+              className="text-sm font-medium text-muted hover:text-foreground transition-colors"
+            >
+              ← Transcripts
+            </Link>
+          </div>
         </div>
 
         {/* KPI Score Bars */}
@@ -293,6 +325,11 @@ export default function TranscriptPage() {
           <h2 className="text-sm font-semibold text-foreground mb-3">Transcript</h2>
           {lines.map((line: { speaker: string; text: string }, idx: number) => {
             const annotation = turnAnnotations[idx];
+            // Derive role from speaker — agentNames[0] = agent being evaluated, [1] = user
+            const role = line.speaker === conversation.agentNames[0] ? "agent" : "user";
+            const correctedAnn = annotation
+              ? { ...annotation, role }
+              : undefined;
             return (
               <div key={idx} className="py-2 border-b border-border/30 last:border-0">
                 <div>
@@ -302,8 +339,8 @@ export default function TranscriptPage() {
                   <span className="text-muted mx-1.5">:</span>
                   <span className="text-foreground/90">{line.text}</span>
                 </div>
-                {annotation && annotation.label && (
-                  <TurnAnnotationBadge annotation={annotation} />
+                {correctedAnn && correctedAnn.label && (
+                  <TurnAnnotationBadge annotation={correctedAnn} />
                 )}
               </div>
             );

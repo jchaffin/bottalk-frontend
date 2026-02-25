@@ -1,20 +1,22 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Code, SquarePen, X } from "lucide-react";
+import { Code, RefreshCw, SquarePen, X } from "lucide-react";
+import { SHARED_VARS } from "@/lib/sync-variables";
 
 interface TemplateEditorProps {
   value: string;
   variables: Record<string, string>;
   onTextChange: (text: string) => void;
   onVariableChange: (name: string, value: string) => void;
+  onSyncVariables?: () => void | Promise<void>;
   disabled?: boolean;
 }
 
-/** Regex that splits text around {{varName}} tokens, keeping delimiters. */
-const VAR_RE = /(\{\{\w+\}\})/g;
-/** Extract just the variable name from a {{varName}} token. */
-const VAR_NAME_RE = /^\{\{(\w+)\}\}$/;
+/** Regex that splits around {{ var }} or {{ var: default }} tokens. */
+const VAR_RE = /(\{\{\s*\w+(?:\s*:\s*[^}]*)?\s*\}\})/g;
+/** Extract var name (and optional default) from a token. */
+const VAR_TOKEN_RE = /^\{\{\s*(\w+)(?:\s*:\s*([^}]*))?\s*\}\}$/;
 
 /**
  * A prompt editor that renders `{{variable}}` tokens as interactive chips.
@@ -30,10 +32,12 @@ export default function TemplateEditor({
   variables,
   onTextChange,
   onVariableChange,
+  onSyncVariables,
   disabled = false,
 }: TemplateEditorProps) {
   const [editing, setEditing] = useState(false);
   const [activeChip, setActiveChip] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
   const [popoverPos, setPopoverPos] = useState<{ top: number; left: number } | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const renderedRef = useRef<HTMLDivElement>(null);
@@ -99,6 +103,7 @@ export default function TemplateEditor({
   const handleChipClick = useCallback(
     (varName: string, chipEl: HTMLSpanElement) => {
       if (disabled) return;
+      if (varName === "name") return; // Name is derived from voice — not editable
       const containerRect = containerRef.current?.getBoundingClientRect();
       const chipRect = chipEl.getBoundingClientRect();
       if (containerRect) {
@@ -130,44 +135,45 @@ export default function TemplateEditor({
           onBlur={handleExitEdit}
           disabled={disabled}
           style={editHeight ? { height: editHeight } : undefined}
-          className="input-bordered border-accent/40! p-3 leading-relaxed resize-none font-mono h-full"
+          className="input-bordered p-3 leading-relaxed resize-none font-mono h-full border-accent/40"
         />
       ) : (
         /* --- Rendered view with chips --- */
         <div
           ref={renderedRef}
           onDoubleClick={enterEdit}
-          className="w-full h-full rounded-lg bg-surface-elevated border border-border p-4 text-xs text-foreground/80 leading-loose min-h-[20rem] cursor-text whitespace-pre-wrap break-words transition-all hover:border-border/80"
+          className="w-full h-full rounded-lg bg-surface-elevated border border-border p-4 text-xs text-foreground/80 leading-loose min-h-[8rem] sm:min-h-[20rem] cursor-text whitespace-pre-wrap break-words transition-all hover:border-border/80"
         >
           {segments.map((segment, i) => {
-            const match = segment.match(VAR_NAME_RE);
+            const match = segment.match(VAR_TOKEN_RE);
             if (match) {
               const varName = match[1];
-              const hasValue = varName in variables && variables[varName] !== "";
+              const inlineDefault = match[2]?.trim();
+              const displayValue = variables[varName] ?? inlineDefault ?? varName;
+              const hasValue = (varName in variables && variables[varName] !== "") || !!inlineDefault;
               return (
                 <span
                   key={`${varName}-${i}`}
-                  onClick={(e) =>
-                    handleChipClick(varName, e.currentTarget)
-                  }
+                  onClick={(e) => varName !== "name" && handleChipClick(varName, e.currentTarget)}
                   title={
                     hasValue
-                      ? `${varName} = ${variables[varName]}`
+                      ? `${varName} = ${displayValue}`
                       : `${varName} (click to set value)`
                   }
                   className={`
                     inline-flex items-center gap-0.5 px-1.5 py-0.5 mx-0.5 rounded-md
-                    text-[11px] leading-none font-medium cursor-pointer select-none
-                    transition-all hover:scale-105
+                    text-[11px] leading-none font-medium select-none
+                    transition-all
+                    ${varName === "name" ? "cursor-default" : "cursor-pointer hover:scale-105"}
                     ${
                       hasValue
-                        ? "bg-accent/15 text-accent border border-accent/25 hover:bg-accent/25"
-                        : "bg-accent-agent2/15 text-accent-agent2 border border-accent-agent2/25 hover:bg-accent-agent2/25"
+                        ? "bg-accent/15 text-foreground border border-accent/30 hover:bg-accent/25"
+                        : "bg-accent-agent2/15 text-foreground border border-accent-agent2/30 hover:bg-accent-agent2/25"
                     }
                   `}
                 >
                   <Code className="w-2.5 h-2.5 opacity-60" strokeWidth={2.5} />
-                  {hasValue ? variables[varName] : varName}
+                  {displayValue}
                 </span>
               );
             }
@@ -194,19 +200,51 @@ export default function TemplateEditor({
           className="absolute z-50 bg-surface border border-border rounded-xl shadow-lg shadow-shadow-color p-3 space-y-2 left-0 right-0"
           style={{ top: popoverPos.top }}
         >
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-2">
             <span className="text-[11px] font-mono text-muted/60">
               {activeChip}
             </span>
-            <button
-              onClick={() => {
-                setActiveChip(null);
-                setPopoverPos(null);
-              }}
-              className="text-muted/40 hover:text-muted/80 transition-colors"
-            >
-              <X className="w-3 h-3" strokeWidth={2.5} />
-            </button>
+            <div className="flex items-center gap-1">
+              {onSyncVariables && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (!SHARED_VARS.includes(activeChip as (typeof SHARED_VARS)[number])) return;
+                    setSyncing(true);
+                    try {
+                      await onSyncVariables();
+                    } finally {
+                      setSyncing(false);
+                    }
+                  }}
+                  disabled={
+                    disabled ||
+                    syncing ||
+                    !SHARED_VARS.includes(activeChip as (typeof SHARED_VARS)[number])
+                  }
+                  title={
+                    SHARED_VARS.includes(activeChip as (typeof SHARED_VARS)[number])
+                      ? "Sync across both agents"
+                      : "Not available for this variable"
+                  }
+                  className="p-1 rounded text-muted/40 hover:text-muted/80 hover:bg-surface-elevated disabled:opacity-50 transition-colors"
+                >
+                  <RefreshCw
+                    className={"w-3.5 h-3.5" + (syncing ? " animate-spin" : "")}
+                    strokeWidth={2.5}
+                  />
+                </button>
+              )}
+              <button
+                onClick={() => {
+                  setActiveChip(null);
+                  setPopoverPos(null);
+                }}
+                className="p-1 rounded text-muted/40 hover:text-muted/80 transition-colors"
+              >
+                <X className="w-3 h-3" strokeWidth={2.5} />
+              </button>
+            </div>
           </div>
           <textarea
             ref={inputRef}
@@ -219,8 +257,8 @@ export default function TemplateEditor({
               }
             }}
             rows={3}
-            placeholder={`Value for ${activeChip}`}
-            className="input-bordered w-full! px-2.5! py-2! text-foreground text-sm resize-none"
+            placeholder={"Value for " + activeChip}
+            className="input-bordered w-full px-2.5 py-2 text-foreground text-sm resize-none"
           />
         </div>
       )}

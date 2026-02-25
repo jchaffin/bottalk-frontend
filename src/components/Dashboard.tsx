@@ -54,6 +54,7 @@ export default function Dashboard() {
   const [error, setError] = useState<string | null>(null);
   const [days, setDays] = useState(7);
   const [embedding, setEmbedding] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<string | null>(null);
 
   const fetchDashboard = useCallback(async () => {
     try {
@@ -75,6 +76,20 @@ export default function Dashboard() {
     const interval = setInterval(fetchDashboard, 30_000);
     return () => clearInterval(interval);
   }, [fetchDashboard]);
+
+  async function handleDelete(conversationId: string) {
+    if (!confirm("Delete this transcript? This cannot be undone.")) return;
+    setDeleting(conversationId);
+    try {
+      const res = await fetch(`/api/transcripts/${conversationId}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("Failed to delete");
+      await fetchDashboard();
+    } catch (err) {
+      console.error("Delete error:", err);
+    } finally {
+      setDeleting(null);
+    }
+  }
 
   async function handleEmbed(conversationId: string) {
     setEmbedding(conversationId);
@@ -170,7 +185,9 @@ export default function Dashboard() {
       <SessionsTable
         conversations={data.recentConversations}
         onEmbed={handleEmbed}
+        onDelete={handleDelete}
         embedding={embedding}
+        deleting={deleting}
       />
     </div>
   );

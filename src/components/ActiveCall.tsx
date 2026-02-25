@@ -16,6 +16,7 @@ interface ActiveCallProps {
   onMetrics?: (metrics: TurnMetric[]) => void;
   onLeave: () => void;
   onStop: () => void;
+  onCallEnded?: () => void | Promise<void>;
 }
 
 /** Wraps CallProvider with a loading state and stop button. */
@@ -31,9 +32,10 @@ export default function ActiveCall({
   onMetrics,
   onLeave,
   onStop,
+  onCallEnded,
 }: ActiveCallProps) {
   return (
-    <div className="w-full max-w-2xl space-y-6">
+    <div className="w-full min-w-0 max-w-2xl space-y-6">
       {starting && (
         <div className="flex items-center justify-center gap-3 py-8">
           <Loader2 className="w-5 h-5 text-accent animate-spin" />
@@ -53,6 +55,7 @@ export default function ActiveCall({
             onTranscript={onTranscript}
             onMetrics={onMetrics}
             onLeave={onLeave}
+            onCallEnded={onCallEnded}
           />
         </div>
       )}

@@ -9,9 +9,6 @@ export async function GET() {
     return NextResponse.json(scenarios);
   } catch (err) {
     console.error("GET /api/scenarios error:", err);
-    return NextResponse.json(
-      { detail: err instanceof Error ? err.message : "Internal error" },
-      { status: 500 },
-    );
+    return NextResponse.json([], { status: 200 });
   }
 }

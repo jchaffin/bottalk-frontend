@@ -12,7 +12,7 @@ import type {
 import AgentAvatar from "./AgentAvatar";
 import Transcript from "./Transcript";
 import type { TranscriptLine } from "@/lib/api";
-import { DEFAULT_AGENT_COLORS } from "@/lib/config";
+import { DEFAULT_AGENT_COLORS, APP_MESSAGE_LABEL } from "@/lib/config";
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return !!v && typeof v === "object" && !Array.isArray(v);
@@ -27,10 +27,13 @@ function parseTurnAnnotations(v: unknown): TranscriptLine["annotation"][] {
   return v.map((a) => {
     const r = isRecord(a) ? a : {};
     const label = typeof r.label === "string" ? r.label : "";
+    const rawRole = typeof r.role === "string" ? r.role : undefined;
+    const role = rawRole === "agent" || rawRole === "user" ? rawRole : undefined;
     const relevantKpis = Array.isArray(r.relevantKpis)
       ? r.relevantKpis.filter((k): k is string => typeof k === "string")
       : [];
     return {
+      role,
       label,
       sentiment: normalizeSentiment(r.sentiment),
       relevantKpis,
@@ -62,6 +65,7 @@ type MetricKey = "ttfb" | "llm" | "tts" | "e2e";
  * @property onTranscript - Fired once when the call ends, with the full transcript.
  * @property onMetrics    - Fired once when the call ends, with collected latency metrics.
  * @property onLeave      - Fired after the local participant has left the meeting.
+ * @property onCallEnded  - Fired when classification detects call ended (stops backend, navigates).
  */
 interface CallProviderProps {
   roomUrl: string;
@@ -74,6 +78,7 @@ interface CallProviderProps {
   onTranscript?: (lines: { speaker: string; text: string }[]) => void;
   onMetrics?: (metrics: TurnMetric[]) => void;
   onLeave?: () => void;
+  onCallEnded?: () => void | Promise<void>;
 }
 
 /**
@@ -104,6 +109,7 @@ export default function CallProvider({
   onTranscript,
   onMetrics,
   onLeave,
+  onCallEnded,
 }: CallProviderProps) {
   // ── React state ──────────────────────────────────────────────────────
   const [status, setStatus] = useState("Connecting...");
@@ -143,6 +149,8 @@ export default function CallProvider({
   onMetricsRef.current = onMetrics;
   const onLeaveRef = useRef(onLeave);
   onLeaveRef.current = onLeave;
+  const onCallEndedRef = useRef(onCallEnded);
+  onCallEndedRef.current = onCallEnded;
   const titleRef = useRef(title);
   titleRef.current = title;
 
@@ -154,6 +162,8 @@ export default function CallProvider({
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Number of turns since the last summary refresh. */
   const turnsSinceLastSummaryRef = useRef(0);
+  /** Prevent firing onCallEnded more than once when classification returns callEnded. */
+  const callEndedTriggeredRef = useRef(false);
 
   const agentNameSet = useRef(new Set(agentNames));
   agentNameSet.current = new Set(agentNames);
@@ -214,6 +224,18 @@ export default function CallProvider({
               const kpiScores = isRecord(data.kpiScores) ? data.kpiScores : null;
               const ann = parseTurnAnnotations(kpiScores?.turnAnnotations);
               if (ann.length > 0) setAnnotations(ann);
+            }
+            // Classification detected call ended — stop backend and leave
+            if (
+              isRecord(data) &&
+              data.callEnded === true &&
+              !callEndedTriggeredRef.current
+            ) {
+              callEndedTriggeredRef.current = true;
+              setStatus("Disconnected");
+              onTranscriptRef.current?.(currentLines);
+              if (currentMetrics.length > 0) onMetricsRef.current?.(currentMetrics);
+              await onCallEndedRef.current?.();
             }
           }
         }
@@ -346,7 +368,7 @@ export default function CallProvider({
         try {
           const raw = typeof ev.data === "string" ? (JSON.parse(ev.data) as unknown) : ev.data;
           if (!isRecord(raw)) return;
-          if (raw.label !== "metrics") return;
+          if (raw.label !== APP_MESSAGE_LABEL) return;
 
           const agent = typeof raw.agent === "string" ? raw.agent : "Unknown";
           const type = typeof raw.type === "string" ? raw.type : "";
@@ -393,6 +415,15 @@ export default function CallProvider({
           } else if (type === "e2e") {
             if (value <= 0) return;
             applyMetric("e2e", Math.round(value * 1000));
+          } else if (type === "interruption") {
+            // Mark the most recent bot line as interrupted
+            for (let i = linesSnapshot.length - 1; i >= 0; i--) {
+              if (linesSnapshot[i].speaker === agent && !linesSnapshot[i].interim) {
+                linesSnapshot[i] = { ...linesSnapshot[i], interrupted: true };
+                queueFlush();
+                break;
+              }
+            }
           } else if (type === "turn") {
             const turnNum = typeof raw.turn === "number" ? raw.turn : -1;
             const turnKey = `${agent}:${turnNum}`;
@@ -414,11 +445,11 @@ export default function CallProvider({
             setLiveMetrics([...metricsSnapshot]);
             delete pendingMetrics[agent];
 
-            // Attach metrics to the oldest unannotated Deepgram line for this agent.
+            // Attach metrics to the most recent unannotated line for this agent.
             // If no line exists yet, buffer — applied when the next Deepgram line appears.
             const metricsObj = { ttfb: metric.ttfb, llm: metric.llm, tts: metric.tts, e2e: metric.e2e };
             let applied = false;
-            for (let i = 0; i < linesSnapshot.length; i++) {
+            for (let i = linesSnapshot.length - 1; i >= 0; i--) {
               if (linesSnapshot[i].speaker === agent && !linesSnapshot[i].interim && !linesSnapshot[i].metrics) {
                 linesSnapshot[i] = { ...linesSnapshot[i], metrics: metricsObj };
                 queueFlush();
@@ -429,6 +460,10 @@ export default function CallProvider({
             if (!applied) {
               pendingLineMetrics[agent] = metricsObj;
             }
+
+            // Skip transcript injection — Deepgram is the source of truth.
+            // Injecting from app-message caused duplicates when both
+            // Deepgram and the turn event delivered the same text.
           }
         } catch { /* ignore malformed app-messages */ }
       });
@@ -492,6 +527,21 @@ export default function CallProvider({
       let linesSnapshot: TranscriptLine[] = [];
       let nextLineId = 0;
       let flushQueued = false;
+
+      function mergeConsecutiveSpeakers(
+        rawLines: { speaker: string; text: string }[],
+      ): { speaker: string; text: string }[] {
+        const out: { speaker: string; text: string }[] = [];
+        for (const line of rawLines) {
+          const last = out.length > 0 ? out[out.length - 1] : null;
+          if (last && last.speaker === line.speaker) {
+            out[out.length - 1] = { ...last, text: last.text + " " + line.text };
+          } else {
+            out.push({ ...line });
+          }
+        }
+        return out;
+      }
 
       function queueFlush() {
         if (flushQueued) return;
@@ -588,9 +638,11 @@ export default function CallProvider({
 
         queueFlush();
 
-        const cleanLines = linesSnapshot
-          .filter((l) => !l.interim)
-          .map((l) => ({ speaker: l.speaker, text: l.text }));
+        const cleanLines = mergeConsecutiveSpeakers(
+          linesSnapshot
+            .filter((l) => !l.interim)
+            .map((l) => ({ speaker: l.speaker, text: l.text })),
+        );
         scheduleIncrementalSave(cleanLines, [...metricsSnapshot]);
       });
 
@@ -618,9 +670,11 @@ export default function CallProvider({
       call.on("left-meeting", () => {
         setStatus("Disconnected");
         Object.keys(audioEls).forEach(cleanupAudio);
-        const toSave = linesSnapshot
-          .filter((l) => !l.interim)
-          .map((l) => ({ speaker: l.speaker, text: l.text }));
+        const toSave = mergeConsecutiveSpeakers(
+          linesSnapshot
+            .filter((l) => !l.interim)
+            .map((l) => ({ speaker: l.speaker, text: l.text })),
+        );
 
         // Final incremental save (forces summary + embed)
         if (toSave.length > savedLineCountRef.current) {
@@ -664,7 +718,7 @@ export default function CallProvider({
               }
               console.warn(`[CallProvider] startTranscription retry ${attempt}/4 failed:`, msg);
               if (attempt < 4) {
-                await new Promise((r) => setTimeout(r, 700));
+                await new Promise((r) => setTimeout(r, 350));
               }
             }
           }
@@ -714,7 +768,7 @@ export default function CallProvider({
       <div ref={containerRef} className="hidden" />
 
       {/* Agent avatars with speaking-pulse indicators */}
-      <div className="flex gap-16">
+      <div className="flex flex-wrap justify-center gap-6 sm:gap-16">
         {agentNames.map((name, idx) => (
           <AgentAvatar
             key={name}
@@ -728,7 +782,7 @@ export default function CallProvider({
 
       {/* Aggregate latency stats */}
       {totalTurns > 0 && (
-        <div className="w-full grid grid-cols-4 gap-3">
+        <div className="w-full grid grid-cols-2 sm:grid-cols-4 gap-3">
           {[
             { label: "Avg TTFB", value: aggTtfb, color: "#686EFF" },
             { label: "Avg LLM", value: aggLlm, color: "#22c55e" },
@@ -786,7 +840,10 @@ export default function CallProvider({
           ? lines.map((line, idx) => {
               const nonInterimIdx = lines.slice(0, idx + 1).filter((l) => !l.interim).length - 1;
               const ann = annotations[nonInterimIdx];
-              return ann && !line.interim ? { ...line, annotation: ann } : line;
+              if (!ann || line.interim) return line;
+              // Derive role from speaker — agentNames[0] = agent being evaluated, [1] = user
+              const role = line.speaker === agentNames[0] ? "agent" : "user";
+              return { ...line, annotation: { ...ann, role } };
             })
           : lines
         }

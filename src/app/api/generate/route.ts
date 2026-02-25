@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { generateText, Output } from "ai";
 import { openai } from "@ai-sdk/openai";
 import { z } from "zod";
-import { TOPIC_MIN_LENGTH, TOPIC_MAX_LENGTH } from "@/lib/config";
+import { TOPIC_MIN_LENGTH, TOPIC_MAX_LENGTH, DEFAULT_AGENT_1_NAME } from "@/lib/config";
 
 const defaultEntry = z.object({
   variable: z.string().describe("The variable name (e.g. agent_name)"),
@@ -28,14 +28,14 @@ function toDefaultsRecord(arr: { variable: string; value: string }[]): Record<st
 
 const SYSTEM_PROMPT = `You are a conversation designer. Given a topic, generate system prompts for two AI voice agents who will have a live phone conversation.
 
-Choose fitting names for each agent based on the topic. Assign complementary roles (e.g. sales rep / customer, interviewer / candidate, agent / caller, consultant / client). Agent 1 always initiates the conversation.
+Choose fitting names for each agent based on the topic. Assign complementary roles (e.g. sales rep / customer, interviewer / candidate, agent / caller, consultant / client). System agent always initiates the conversation.
 
 IMPORTANT: Use {{variable_name}} template syntax for ALL specific nouns in the prompts — company names, product names, job titles, prices, team sizes, pain points, backstory details, etc. This allows users to customize the scenario. Use snake_case for variable names.
 
 For each agent, also return a "defaults" object mapping every variable name to its suggested default value.
 
 Example prompt fragment: "You are {{agent_name}}, a {{role}} at {{company}}. Your product — {{product}} — costs {{price}}."
-Example defaults: [{ "variable": "agent_name", "value": "Sarah" }, { "variable": "role", "value": "sales rep" }, { "variable": "company", "value": "TechFlow" }]
+Example defaults: [{ "variable": "agent_name", "value": "${DEFAULT_AGENT_1_NAME}" }, { "variable": "role", "value": "sales rep" }, { "variable": "company", "value": "bottalk" }]
 
 Each prompt MUST end with these rules:
 Rules:

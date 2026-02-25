@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { syncSharedVariables } from "@/lib/sync-variables";
 
 type AgentVars = Record<string, string>;
 
@@ -22,10 +23,18 @@ export async function POST(request: NextRequest) {
   try {
     const raw = await request.json();
     const body = raw as {
+      return NextResponse.json({ detail: "Expected { agent1, agent2 }" }, { status: 400 });
+    }
+
       agent1?: unknown;
+      if (!v || typeof v !== "object" || Array.isArray(v)) return {};
       agent2?: unknown;
       sourceSlot?: string;
+        if (typeof k === "string" && typeof val === "string") r[k] = val;
+      }
+      return r;
     };
+
     const vars = {
       agent1: toRecord(body.agent1),
       agent2: toRecord(body.agent2),

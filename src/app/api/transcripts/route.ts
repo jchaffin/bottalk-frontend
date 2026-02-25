@@ -4,13 +4,29 @@ import { embedBatch } from "@/lib/embeddings";
 import { classifyTranscript } from "@/lib/kpis";
 import { getIndex } from "@/lib/pinecone";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
-    const conversations = await prisma.conversation.findMany({
-      orderBy: { createdAt: "desc" },
-      take: 50,
+    const { searchParams } = new URL(request.url);
+    const page = Math.max(1, parseInt(searchParams.get("page") || "1", 10));
+    const limit = Math.min(50, Math.max(1, parseInt(searchParams.get("limit") || "20", 10)));
+    const skip = (page - 1) * limit;
+
+    const [conversations, total] = await Promise.all([
+      prisma.conversation.findMany({
+        orderBy: { createdAt: "desc" },
+        skip,
+        take: limit,
+      }),
+      prisma.conversation.count(),
+    ]);
+
+    return NextResponse.json({
+      conversations,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
     });
-    return NextResponse.json(conversations);
   } catch (err) {
     console.error("GET /api/transcripts error:", err);
     return NextResponse.json(
@@ -49,7 +65,7 @@ export async function POST(request: NextRequest) {
 
     // Auto-embed + classify if Pinecone is configured (fire-and-forget)
     if (process.env.PINECONE_API_KEY && cleanLines.length > 0) {
-      embedAndClassify(conversation.id, cleanLines).catch((err) =>
+      embedAndClassify(conversation.id, cleanLines, agentNames?.[0]).catch((err) =>
         console.error("Auto-embed error:", err),
       );
     }
@@ -67,11 +83,12 @@ export async function POST(request: NextRequest) {
 async function embedAndClassify(
   conversationId: string,
   lines: { speaker: string; text: string }[],
+  agentName?: string,
 ) {
   const utteranceTexts = lines.map((l) => `${l.speaker}: ${l.text}`);
   const [embeddings, classification] = await Promise.all([
     embedBatch(utteranceTexts),
-    classifyTranscript(lines),
+    classifyTranscript(lines, agentName),
   ]);
 
   const embeddingPrefix = `conv-${conversationId}`;

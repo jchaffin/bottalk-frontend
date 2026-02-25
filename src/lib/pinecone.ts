@@ -12,6 +12,6 @@ export function getPinecone(): Pinecone {
 }
 
 export function getIndex() {
-  const indexName = process.env.PINECONE_INDEX || "outrival";
+  const indexName = process.env.PINECONE_INDEX || "bottalk";
   return getPinecone().index(indexName);
 }
