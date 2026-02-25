@@ -11,7 +11,7 @@ interface QuickStartNavButtonProps {
   variant?: "default" | "icon";
 }
 
-/** Nav bar button that starts a call immediately (Quick Start) and navigates to /call/active. */
+/** Nav bar button that starts a call immediately (Quick Start) and navigates to /call. */
 export default function QuickStartNavButton({ variant = "default" }: QuickStartNavButtonProps) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
@@ -22,7 +22,7 @@ export default function QuickStartNavButton({ variant = "default" }: QuickStartN
     try {
       const session = await quickStartConversation();
       storeCallSession(session);
-      router.push("/call/active");
+      router.push("/call");
     } catch {
       setLoading(false);
       router.push("/call");

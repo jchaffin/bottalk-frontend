@@ -1,4 +1,4 @@
-/** Session storage key for active call params (used when navigating to /call/active). */
+/** Session storage key for active call params (passed via /call when nav quick start). */
 const STORAGE_KEY = "bottalk-active-call";
 
 export interface StoredCallSession {

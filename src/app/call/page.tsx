@@ -20,6 +20,7 @@ import {
   type Scenario,
 } from "@/lib/api";
 import { replaceVariables, DEFAULT_AGENT_COLORS, DEFAULT_AGENT_1_NAME, DEFAULT_AGENT_2_NAME, SYSTEM_AGENT_LABEL, USER_AGENT_LABEL } from "@/lib/config";
+import { getCallSession, clearCallSession } from "@/lib/call-session";
 import ScenarioPicker from "@/components/ScenarioPicker";
 import CustomTopicForm from "@/components/CustomTopicForm";
 import PromptPreview from "@/components/PromptPreview";
@@ -45,6 +46,24 @@ export default function CallPage() {
 
   useEffect(() => {
     fetchScenarios().then(setScenarios).catch(console.error);
+  }, []);
+
+  // Restore active call from nav quick start (stored in sessionStorage)
+  useEffect(() => {
+    const session = getCallSession();
+    if (session) {
+      setRoomUrl(session.roomUrl);
+      setToken(session.token);
+      setAgentSessions(session.agentSessions);
+      setAgentColors(session.agentColors);
+      setScenarioLabel(session.scenarioLabel);
+      setPrompts({
+        agent1: { name: session.agentNames[0], role: "", prompt: "", voice_id: "" },
+        agent2: { name: session.agentNames[1], role: "", prompt: "", voice_id: "" },
+      });
+      setVariables({ agent1: { name: session.agentNames[0] }, agent2: { name: session.agentNames[1] } });
+      setPhase("active");
+    }
   }, []);
 
   useEffect(() => {
@@ -170,6 +189,7 @@ export default function CallPage() {
   }
 
   function resetState() {
+    clearCallSession();
     setRoomUrl(null);
     setToken(null);
     setAgentSessions(undefined);

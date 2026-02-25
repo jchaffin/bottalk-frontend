@@ -113,7 +113,7 @@ export async function startConversation(options: StartOptions): Promise<StartRes
   }
 }
 
-/** Quick start: fetch scenarios, pick default (sales), start conversation. Returns session for /call/active. */
+/** Quick start: fetch scenarios, pick default (sales), start conversation. Returns session to pass to /call. */
 export async function quickStartConversation(): Promise<{
   roomUrl: string;
   token: string;
