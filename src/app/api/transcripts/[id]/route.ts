@@ -82,13 +82,15 @@ export async function PATCH(
     let classificationData: Record<string, unknown> = {};
     if (cleanLines && cleanLines.length >= 2) {
       try {
-        const classification = await classifyTranscript(cleanLines);
+        const agentNames = existing.agentNames as string[];
+        const classification = await classifyTranscript(cleanLines, agentNames?.[0]);
         classificationData = {
           kpiScores: {
             ...classification.scores,
             turnAnnotations: classification.turnAnnotations,
           } as unknown as Record<string, unknown>,
           outcome: classification.outcome,
+          callEnded: classification.callEnded,
         };
       } catch (err) {
         console.error("Inline classify error:", err);

@@ -28,6 +28,11 @@ async function stopPCCSession(sessionId: string): Promise<void> {
 }
 
 export async function POST() {
+  if (PCC_AGENT_NAME === "local") {
+    await fetch("http://localhost:8000/api/stop", { method: "POST" }).catch(() => {});
+    return NextResponse.json({ status: "stopped" });
+  }
+
   try {
     const sessions = await prisma.session.findMany();
 

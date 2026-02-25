@@ -67,7 +67,11 @@ export type OutcomeLabel =
 
 export type TurnSentiment = "positive" | "neutral" | "negative";
 
+/** agent = bot being evaluated (e.g. System). user = counterpart bot (e.g. User) — both are bots, not a real human. */
+export type TurnRole = "agent" | "user";
+
 export interface TurnAnnotation {
+  role: TurnRole;
   label: string;
   sentiment: TurnSentiment;
   relevantKpis: KpiKey[];
@@ -77,6 +81,8 @@ export interface ClassifyResult {
   scores: KpiScores;
   outcome: OutcomeLabel;
   turnAnnotations: TurnAnnotation[];
+  /** True when both parties have said goodbye and the conversation has naturally concluded. */
+  callEnded?: boolean;
 }
 
 const CLASSIFY_SCHEMA = {
@@ -104,6 +110,7 @@ const CLASSIFY_SCHEMA = {
       items: {
         type: "object" as const,
         properties: {
+          role: { type: "string" as const, enum: ["agent", "user"] },
           label: { type: "string" as const },
           sentiment: { type: "string" as const, enum: ["positive", "neutral", "negative"] },
           relevantKpis: {
@@ -111,27 +118,34 @@ const CLASSIFY_SCHEMA = {
             items: { type: "string" as const },
           },
         },
-        required: ["label", "sentiment", "relevantKpis"],
+        required: ["role", "label", "sentiment", "relevantKpis"],
         additionalProperties: false,
       },
     },
+    callEnded: { type: "boolean" as const },
   },
-  required: ["scores", "outcome", "turnAnnotations"],
+  required: ["scores", "outcome", "turnAnnotations", "callEnded"],
   additionalProperties: false,
 };
 
 export async function classifyTranscript(
   lines: { speaker: string; text: string }[],
+  agentName?: string,
 ): Promise<ClassifyResult> {
   const kpiPrompt = KPI_DEFINITIONS.map(
     (k) => `- ${k.key} (${k.label}): ${k.description} Scale: ${k.scale}`,
   ).join("\n");
 
-  const numberedTranscript = lines
-    .map((l, i) => `[${i}] ${l.speaker}: ${l.text}`)
-    .join("\n");
-
   const speakerNames = [...new Set(lines.map((l) => l.speaker))];
+  const resolvedAgent = agentName || speakerNames[0] || "Agent";
+  const resolvedUser = speakerNames.find((n) => n !== resolvedAgent) || speakerNames[1] || "User";
+
+  const numberedTranscript = lines
+    .map((l, i) => {
+      const role = l.speaker === resolvedAgent ? "agent" : "user";
+      return `[${i}] (${role}) ${l.speaker}: ${l.text}`;
+    })
+    .join("\n");
 
   const response = await getOpenAI().responses.create({
     model: "gpt-4.1-mini",
@@ -144,30 +158,39 @@ export async function classifyTranscript(
         schema: CLASSIFY_SCHEMA,
       },
     },
-    instructions: `You are an expert voice AI sales call analyst. You will receive a numbered transcript of a live sales call between AI voice agents.
+    instructions: `You are an expert voice AI sales call analyst.
 
-Speakers: ${speakerNames.join(", ")}
+Roles (both speakers are AI voice bots, not humans):
+- AGENT (being evaluated): ${resolvedAgent}
+- USER (counterpart bot, e.g. customer role): ${resolvedUser}
 
-1. Score the conversation against each KPI (0-100).
+KPIs measure the AGENT's performance. The USER's turns are dependent-variable signals showing how the agent's techniques are landing.
+
+1. Score the AGENT against each KPI (0-100).
 2. Provide an overall outcome label.
-3. Annotate only the NOTABLE turns — moments where something important happened (good or bad). Skip routine filler turns.
+3. Annotate NOTABLE turns only (~30-50%). Set role to "agent" or "user" matching the speaker.
+4. Set callEnded to true ONLY when BOTH parties have explicitly said goodbye and the conversation has naturally concluded (e.g. agreed next steps, exchanged farewells). Otherwise false.
 
 KPIs:
 ${kpiPrompt}
 
 Outcome labels: "excellent" (avg >= 80), "good" (avg >= 65), "average" (avg >= 50), "needs_improvement" (avg >= 35), "poor" (avg < 35).
 
-Annotation guidelines — only tag turns that matter:
-- Sales pivots: "Discovery question", "Pain point probe", "Value prop delivery", "Trial close", "Objection reframe"
-- Voice quality: "Mirroring language", "Active listening signal", "Talked over prospect"
-- Mistakes: "Missed buying signal", "Too pushy too early", "Ignored objection", "Feature dump"
-- Momentum shifts: "Opened next step", "Anchored pricing", "Created urgency", "Lost control"
+Agent turn labels (what technique/behavior):
+- "Discovery question", "Pain point probe", "Value prop delivery", "Trial close", "Objection reframe"
+- "Active listening signal", "Mirroring language", "Talked over prospect"
+- "Missed buying signal", "Too pushy", "Ignored objection", "Feature dump"
+- "Opened next step", "Anchored pricing", "Created urgency"
+
+User turn labels (dependent variable signals):
+- "Buying signal", "Positive engagement", "Asked for details", "Showed interest"
+- "Raised objection", "Price concern", "Skepticism", "Asked for proof"
+- "Disengagement", "Resistance", "Dismissive"
+- "Agreement", "Commitment signal", "Ready to proceed"
 
 turnAnnotations MUST have exactly ${lines.length} entries (one per line).
-For notable turns: { "label": "2-6 word annotation", "sentiment": "positive"|"neutral"|"negative", "relevantKpis": ["key"] }
-For unremarkable turns: { "label": "", "sentiment": "neutral", "relevantKpis": [] }
-
-Only annotate ~30-50% of turns. Leave the rest with empty labels.`,
+Notable: { "role": "agent"|"user", "label": "2-6 words", "sentiment": "positive"|"neutral"|"negative", "relevantKpis": ["key"] }
+Unremarkable: { "role": "agent"|"user", "label": "", "sentiment": "neutral", "relevantKpis": [] }`,
     input: numberedTranscript,
   });
 
@@ -186,9 +209,13 @@ Only annotate ~30-50% of turns. Leave the rest with empty labels.`,
   const rawTurnAnnotations = parsedObj.turnAnnotations;
 
   const turnAnnotations: TurnAnnotation[] = Array.isArray(rawTurnAnnotations)
-    ? rawTurnAnnotations.map((a: unknown) => {
+    ? rawTurnAnnotations.map((a: unknown, i: number) => {
         const r = isRecord(a) ? a : {};
         const label = typeof r.label === "string" ? r.label : "";
+        const rawRole = typeof r.role === "string" ? r.role : "";
+        const role: TurnRole = rawRole === "agent" || rawRole === "user"
+          ? rawRole
+          : (lines[i]?.speaker === resolvedAgent ? "agent" : "user");
         const rawSentiment = typeof r.sentiment === "string" ? r.sentiment : "neutral";
         const sentiment = (["positive", "neutral", "negative"].includes(rawSentiment)
           ? rawSentiment
@@ -197,7 +224,7 @@ Only annotate ~30-50% of turns. Leave the rest with empty labels.`,
         const relevantKpis = Array.isArray(r.relevantKpis)
           ? (r.relevantKpis.filter((k): k is string => typeof k === "string" && KPI_KEYS.has(k)) as KpiKey[])
           : ([] as KpiKey[]);
-        return { label, sentiment, relevantKpis };
+        return { role, label, sentiment, relevantKpis };
       })
     : [];
 
@@ -205,6 +232,7 @@ Only annotate ~30-50% of turns. Leave the rest with empty labels.`,
     scores: (parsedObj.scores ?? {}) as KpiScores,
     outcome: (parsedObj.outcome ?? "average") as OutcomeLabel,
     turnAnnotations,
+    callEnded: parsedObj.callEnded === true,
   };
 }
 

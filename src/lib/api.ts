@@ -26,8 +26,11 @@ export interface TranscriptLine {
     tts?: number;
     e2e?: number;
   };
-  /** KPI annotation from real-time classification. */
+  /** True if this turn was an interruption (user spoke over the bot). */
+  interrupted?: boolean;
+  /** KPI annotation from real-time classification. role: agent = evaluated bot, user = counterpart bot (both bots). */
   annotation?: {
+    role?: "agent" | "user";
     label: string;
     sentiment: "positive" | "neutral" | "negative";
     relevantKpis: string[];
@@ -38,8 +41,17 @@ export interface AgentPrompt {
   name: string;
   role: string;
   prompt: string;
+  rules?: string;
   voice_id?: string;
   defaults?: Record<string, string>;
+}
+
+/** Combine prompt and rules for the backend system_prompt. */
+export function systemPromptFromAgent(p: AgentPrompt): string {
+  if (p.rules?.trim()) {
+    return `${p.prompt.trim()}\n\nRules:\n${p.rules.trim()}`;
+  }
+  return p.prompt.trim();
 }
 
 export interface GeneratedPrompts {
@@ -102,7 +114,7 @@ export async function startConversation(options: StartOptions): Promise<StartRes
   }
 }
 
-/** Quick-start a call using the baked-in Sarah & Mike defaults — no prompts needed. */
+/** Quick-start a call using the baked-in System & User defaults — no prompts needed. */
 export async function startQuickCall(): Promise<StartResponse> {
   const target = agentTarget("/api/start");
   try {
@@ -156,7 +168,21 @@ export interface AgentVariables {
   agent2: Record<string, string>;
 }
 
-/** Collect default variable values per agent from a scenario. Shared keys (like topic) are copied to both. */
+/** Sync shared variables (topic, etc.) across both agents via backend. */
+export async function syncVariables(vars: AgentVariables): Promise<AgentVariables> {
+  const res = await fetch(`${NEXT_API}/api/sync-variables`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(vars),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `API error ${res.status}`);
+  }
+  return res.json();
+}
+
+/** Collect default variable values per agent from a scenario. Topic (call subject) can override scenario title via defaults.topic. */
 export function collectDefaults(scenario: Scenario): AgentVariables {
   const shared: Record<string, string> = { topic: scenario.title };
   const a1Defaults = { ...shared, ...(scenario.agents[0]?.defaults ?? {}) };
@@ -164,22 +190,41 @@ export function collectDefaults(scenario: Scenario): AgentVariables {
   return { agent1: a1Defaults, agent2: a2Defaults };
 }
 
+/** Split legacy prompt (with embedded Rules) into prompt + rules for display. */
+export function splitPromptAndRules(agent: AgentPrompt): { prompt: string; rules: string } {
+  if (agent.rules !== undefined && agent.rules !== "") {
+    return { prompt: agent.prompt, rules: agent.rules };
+  }
+  const idx = agent.prompt.indexOf("\n\nRules:\n");
+  if (idx >= 0) {
+    return {
+      prompt: agent.prompt.slice(0, idx).trim(),
+      rules: agent.prompt.slice(idx + 9).trim(),
+    };
+  }
+  return { prompt: agent.prompt, rules: "" };
+}
+
 /** Convert a DB scenario into editable prompts (keeps {{variables}} intact). */
 export function scenarioToPrompts(scenario: Scenario): GeneratedPrompts {
-  const a1 = scenario.agents[0];
-  const a2 = scenario.agents[1];
+  const a1 = scenario.agents[0] as AgentPrompt;
+  const a2 = scenario.agents[1] as AgentPrompt;
+  const s1 = splitPromptAndRules(a1);
+  const s2 = splitPromptAndRules(a2);
   return {
     agent1: {
       name: a1.name,
       role: a1.role,
-      prompt: a1.prompt,
+      prompt: s1.prompt,
+      rules: s1.rules,
       voice_id: a1.voice_id || voiceForName(a1.name) || DEFAULT_VOICE_1,
       defaults: a1.defaults,
     },
     agent2: {
       name: a2.name,
       role: a2.role,
-      prompt: a2.prompt,
+      prompt: s2.prompt,
+      rules: s2.rules,
       voice_id: a2.voice_id || voiceForName(a2.name) || DEFAULT_VOICE_2,
       defaults: a2.defaults,
     },

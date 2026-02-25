@@ -24,7 +24,7 @@ const schibstedGrotesk = Schibsted_Grotesk({
 });
 
 export const metadata: Metadata = {
-  title: "OutRival Dashboard",
+  title: "bottalk Dashboard",
   description: "Agent performance metrics, latency tracking, and KPI outcomes",
 };
 
@@ -60,11 +60,11 @@ export default function RootLayout({
                 className="text-lg font-bold tracking-tight text-foreground"
                 style={{ fontFamily: "var(--font-display), Duran, sans-serif" }}
               >
-                OutRival
+                bottalk
               </Link>
               <nav className="hidden sm:flex items-center gap-1">
                 <Link
-                  href="/"
+                  href="/dashboard"
                   id="nav-dashboard"
                   data-testid="nav-dashboard"
                   className="text-xs font-medium text-muted hover:text-foreground px-3 py-1.5 rounded-lg hover:bg-surface-elevated transition-all flex items-center gap-1.5"
@@ -117,7 +117,7 @@ export default function RootLayout({
         <footer className="border-t border-border/50 mt-12">
           <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
             <p className="text-[10px] text-muted/40">
-              &copy; {new Date().getFullYear()} Jacob Chaffin &middot; OutRival
+              &copy; {new Date().getFullYear()} Jacob Chaffin &middot; bottalk
             </p>
             <p className="text-[10px] text-muted/40">
               Powered by Pipecat Cloud + Pinecone

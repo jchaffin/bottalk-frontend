@@ -16,6 +16,7 @@ interface ActiveCallProps {
   onMetrics?: (metrics: TurnMetric[]) => void;
   onLeave: () => void;
   onStop: () => void;
+  onCallEnded?: () => void | Promise<void>;
 }
 
 /** Wraps CallProvider with a loading state and stop button. */
@@ -31,6 +32,7 @@ export default function ActiveCall({
   onMetrics,
   onLeave,
   onStop,
+  onCallEnded,
 }: ActiveCallProps) {
   return (
     <div className="w-full max-w-2xl space-y-6">
@@ -53,6 +55,7 @@ export default function ActiveCall({
             onTranscript={onTranscript}
             onMetrics={onMetrics}
             onLeave={onLeave}
+            onCallEnded={onCallEnded}
           />
         </div>
       )}

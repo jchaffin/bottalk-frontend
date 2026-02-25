@@ -12,6 +12,7 @@ import {
   type KpiScores,
   type OutcomeLabel,
   type TurnAnnotation,
+  type TurnRole,
   type TurnSentiment,
 } from "@/lib/kpis";
 
@@ -65,10 +66,21 @@ function OutcomeBadge({ outcome }: { outcome: OutcomeLabel }) {
   );
 }
 
+const ROLE_BADGE: Record<string, { text: string; className: string }> = {
+  agent: { text: "Agent", className: "text-accent-agent1 bg-accent-agent1/10 border-accent-agent1/20" },
+  user: { text: "User", className: "text-accent-agent2 bg-accent-agent2/10 border-accent-agent2/20" },
+};
+
 function TurnAnnotationBadge({ annotation }: { annotation: TurnAnnotation }) {
+  const roleBadge = annotation.role ? ROLE_BADGE[annotation.role] : null;
   return (
     <div className="flex items-center gap-1.5 mt-1">
       <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${SENTIMENT_DOT[annotation.sentiment]}`} />
+      {roleBadge && (
+        <span className={`text-[9px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded border ${roleBadge.className}`}>
+          {roleBadge.text}
+        </span>
+      )}
       <span className="text-xs text-muted/80 italic">{annotation.label}</span>
       {annotation.relevantKpis.length > 0 && (
         <span className="text-[10px] text-muted/50 font-mono">
@@ -293,6 +305,11 @@ export default function TranscriptPage() {
           <h2 className="text-sm font-semibold text-foreground mb-3">Transcript</h2>
           {lines.map((line: { speaker: string; text: string }, idx: number) => {
             const annotation = turnAnnotations[idx];
+            // Derive role from speaker — agentNames[0] = agent being evaluated, [1] = user
+            const role: TurnRole = line.speaker === conversation.agentNames[0] ? "agent" : "user";
+            const correctedAnn = annotation
+              ? { ...annotation, role }
+              : undefined;
             return (
               <div key={idx} className="py-2 border-b border-border/30 last:border-0">
                 <div>
@@ -302,8 +319,8 @@ export default function TranscriptPage() {
                   <span className="text-muted mx-1.5">:</span>
                   <span className="text-foreground/90">{line.text}</span>
                 </div>
-                {annotation && annotation.label && (
-                  <TurnAnnotationBadge annotation={annotation} />
+                {correctedAnn && correctedAnn.label && (
+                  <TurnAnnotationBadge annotation={correctedAnn} />
                 )}
               </div>
             );

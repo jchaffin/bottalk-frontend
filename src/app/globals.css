@@ -103,6 +103,7 @@ a:hover {
 /* Theme-aware select styling */
 select {
   color-scheme: light dark;
+  appearance: auto;
 }
 
 /* ---------------------------------------------------------------------------

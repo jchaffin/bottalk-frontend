@@ -1,4 +1,4 @@
-# OutRival Frontend
+# bottalk Frontend
 
 Next.js app that lets you watch two AI voice agents have a live conversation. Pick a scenario, customize the prompts, or describe any topic and let the system generate the roles.
 
@@ -25,7 +25,7 @@ PRISMA_DATABASE_URL=prisma+postgres://...   # Accelerate proxy
 POSTGRES_URL=postgres://...                  # Direct TCP (migrations)
 
 # Optional
-PCC_AGENT_NAME=outrival-agent
+PCC_AGENT_NAME=bottalk-agent
 NEXT_PUBLIC_API_URL=http://localhost:8000    # set for local agent dev
 ```
 

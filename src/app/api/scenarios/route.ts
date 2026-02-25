@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { getFallbackScenarios } from "@/lib/static-scenarios";
 
 export async function GET() {
   try {
@@ -9,9 +10,8 @@ export async function GET() {
     return NextResponse.json(scenarios);
   } catch (err) {
     console.error("GET /api/scenarios error:", err);
-    return NextResponse.json(
-      { detail: err instanceof Error ? err.message : "Internal error" },
-      { status: 500 },
-    );
+    // When DB/Accelerate is unreachable, return built-in scenarios so the app still works
+    const fallback = getFallbackScenarios();
+    return NextResponse.json(fallback);
   }
 }

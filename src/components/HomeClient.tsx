@@ -8,6 +8,7 @@ import {
   startConversation,
   startQuickCall,
   stopConversation,
+  syncVariables,
   voiceForName,
   nameForVoice,
   DEFAULT_VOICE_1,
@@ -16,7 +17,7 @@ import {
   type AgentVariables,
   type Scenario,
 } from "@/lib/api";
-import { replaceVariables, DEFAULT_AGENT_COLORS } from "@/lib/config";
+import { replaceVariables, DEFAULT_AGENT_COLORS, DEFAULT_AGENT_1_NAME, DEFAULT_AGENT_2_NAME, SYSTEM_AGENT_LABEL, USER_AGENT_LABEL } from "@/lib/config";
 import ScenarioPicker from "@/components/ScenarioPicker";
 import CustomTopicForm from "@/components/CustomTopicForm";
 import PromptPreview from "@/components/PromptPreview";
@@ -55,8 +56,18 @@ export default function HomeClient({ scenarios }: HomeClientProps) {
   function handlePickScenario(scenario: Scenario) {
     setError(null);
     setScenarioLabel(scenario.title);
-    setPrompts(scenarioToPrompts(scenario));
-    setVariables(collectDefaults(scenario));
+    const raw = scenarioToPrompts(scenario);
+    // Sync name from voice (name is linked to voice)
+    const prompts: GeneratedPrompts = {
+      agent1: { ...raw.agent1, name: nameForVoice(raw.agent1.voice_id || DEFAULT_VOICE_1) || raw.agent1.name },
+      agent2: { ...raw.agent2, name: nameForVoice(raw.agent2.voice_id || DEFAULT_VOICE_2) || raw.agent2.name },
+    };
+    const defaults = collectDefaults(scenario);
+    setVariables({
+      agent1: { ...defaults.agent1, name: prompts.agent1.name },
+      agent2: { ...defaults.agent2, name: prompts.agent2.name },
+    });
+    setPrompts(prompts);
     setPhase("preview");
   }
 
@@ -67,10 +78,13 @@ export default function HomeClient({ scenarios }: HomeClientProps) {
       const result = await generatePrompts(customTopic.trim());
       result.agent1.voice_id = voiceForName(result.agent1.name) || DEFAULT_VOICE_1;
       result.agent2.voice_id = voiceForName(result.agent2.name) || DEFAULT_VOICE_2;
+      // Name is linked to voice
+      result.agent1.name = nameForVoice(result.agent1.voice_id) || result.agent1.name;
+      result.agent2.name = nameForVoice(result.agent2.voice_id) || result.agent2.name;
       const shared = { topic: customTopic.trim() };
       setVariables({
-        agent1: { ...shared, ...(result.agent1.defaults ?? {}) },
-        agent2: { ...shared, ...(result.agent2.defaults ?? {}) },
+        agent1: { ...shared, ...(result.agent1.defaults ?? {}), name: result.agent1.name },
+        agent2: { ...shared, ...(result.agent2.defaults ?? {}), name: result.agent2.name },
       });
       setScenarioLabel(customTopic.trim());
       setPrompts(result);
@@ -106,7 +120,7 @@ export default function HomeClient({ scenarios }: HomeClientProps) {
 
   async function handleQuickStart() {
     setError(null);
-    setScenarioLabel("Quick Start — Sarah & Mike");
+    setScenarioLabel(`Quick Start — ${DEFAULT_AGENT_1_NAME} & ${DEFAULT_AGENT_2_NAME}`);
     setPhase("starting");
     try {
       const res = await startQuickCall();
@@ -114,8 +128,8 @@ export default function HomeClient({ scenarios }: HomeClientProps) {
       setToken(res.token);
       setAgentSessions(res.agentSessions);
       setPrompts({
-        agent1: { name: "Sarah", role: "Sales Rep", prompt: "(using default)", voice_id: DEFAULT_VOICE_1 },
-        agent2: { name: "Mike", role: "Customer", prompt: "(using default)", voice_id: DEFAULT_VOICE_2 },
+        agent1: { name: DEFAULT_AGENT_1_NAME, role: "Sales Rep", prompt: "(using default)", voice_id: DEFAULT_VOICE_1 },
+        agent2: { name: DEFAULT_AGENT_2_NAME, role: "Customer", prompt: "(using default)", voice_id: DEFAULT_VOICE_2 },
       });
       setPhase("active");
     } catch (err) {
@@ -152,25 +166,22 @@ export default function HomeClient({ scenarios }: HomeClientProps) {
 
   function updateAgent(
     slot: "agent1" | "agent2",
-    field: "name" | "role" | "prompt" | "voice_id",
+    field: "name" | "role" | "prompt" | "rules" | "voice_id",
     value: string,
   ) {
     if (!prompts) return;
     const oldName = prompts[slot].name;
     const updated = { ...prompts[slot], [field]: value };
 
-    if (field === "name") {
-      const match = voiceForName(value);
-      if (match) updated.voice_id = match;
-      if (oldName && value && oldName !== value) {
-        updated.prompt = updated.prompt.replaceAll(oldName, value);
-      }
-    }
+    // Name is linked to voice — when voice changes, update name
     if (field === "voice_id") {
-      const newName = nameForVoice(value);
-      if (newName && newName !== oldName) {
-        updated.name = newName;
-        updated.prompt = updated.prompt.replaceAll(oldName, newName);
+      const voiceName = nameForVoice(value);
+      if (voiceName) {
+        updated.name = voiceName;
+        if (oldName && oldName !== voiceName) {
+          updated.prompt = updated.prompt.replaceAll(oldName, voiceName);
+        }
+        setVariables((prev) => ({ ...prev, [slot]: { ...prev[slot], name: voiceName } }));
       }
     }
     setPrompts({ ...prompts, [slot]: updated });
@@ -179,8 +190,8 @@ export default function HomeClient({ scenarios }: HomeClientProps) {
   // ── Derived values ───────────────────────────────────────────────────
 
   const agentNames: [string, string] = prompts
-    ? [prompts.agent1.name, prompts.agent2.name]
-    : ["Agent 1", "Agent 2"];
+? [prompts.agent1.name, prompts.agent2.name]
+        : [SYSTEM_AGENT_LABEL, USER_AGENT_LABEL];
 
   const subtitle =
     phase === "active" && scenarioLabel
@@ -198,13 +209,13 @@ export default function HomeClient({ scenarios }: HomeClientProps) {
       {/* Header */}
       <div className="text-center space-y-4">
         <a
-          href="https://outrival.com"
+          href="https://bottalk.com"
           target="_blank"
           rel="noopener noreferrer"
           className="inline-block text-4xl sm:text-5xl font-bold tracking-tight text-foreground"
           style={{ fontFamily: "var(--font-display), Duran, sans-serif" }}
         >
-          OutRival <span className="font-light">Technical Project</span>
+          bottalk <span className="font-light">Technical Project</span>
         </a>
         <p className="text-lg text-muted max-w-xl mx-auto">{subtitle}</p>
       </div>
@@ -215,7 +226,7 @@ export default function HomeClient({ scenarios }: HomeClientProps) {
           onClick={handleQuickStart}
           className="px-6 py-3 rounded-xl bg-accent-agent1 text-white font-semibold text-sm hover:opacity-90 transition-opacity"
         >
-          Quick Start — Sarah &amp; Mike
+          Quick Start — {DEFAULT_AGENT_1_NAME} &amp; {DEFAULT_AGENT_2_NAME}
         </button>
       )}
 
@@ -248,7 +259,14 @@ export default function HomeClient({ scenarios }: HomeClientProps) {
           agentColors={agentColors}
           starting={phase === "starting"}
           onUpdate={updateAgent}
-          onVariableChange={(slot, name, val) => setVariables((prev) => ({ ...prev, [slot]: { ...prev[slot], [name]: val } }))}
+          onVariableChange={(slot, name, val) => {
+            setVariables((prev) => ({ ...prev, [slot]: { ...prev[slot], [name]: val } }));
+            // name is linked to voice — don't update agent from template name edits
+          }}
+          onSyncVariables={async () => {
+            const synced = await syncVariables(variables);
+            setVariables(synced);
+          }}
           onColorChange={(idx, color) => setAgentColors((prev) => { const next = [...prev] as [string, string]; next[idx] = color; return next; })}
           onBack={handleBack}
           onStart={handleStart}
@@ -285,7 +303,7 @@ export default function HomeClient({ scenarios }: HomeClientProps) {
 
       {/* Footer */}
       <p className="text-[11px] text-muted/30 tracking-wide">
-        &copy; {new Date().getFullYear()} Jacob Chaffin &middot; OutRival. All rights reserved.
+        &copy; {new Date().getFullYear()} Jacob Chaffin &middot; bottalk. All rights reserved.
       </p>
     </main>
   );

@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 
-import { DEFAULT_VOICE_1, DEFAULT_VOICE_2, DEFAULT_SCENARIO_SLUG, DEFAULT_TOPIC, PCC_AGENT_NAME, replaceVariables } from "@/lib/config";
+import { DEFAULT_VOICE_1, DEFAULT_VOICE_2, DEFAULT_SCENARIO_SLUG, DEFAULT_TOPIC, DEFAULT_AGENT_1_NAME, DEFAULT_AGENT_2_NAME, PCC_AGENT_NAME, replaceVariables } from "@/lib/config";
+import { syncSharedVariables } from "@/lib/sync-variables";
 
 const PCC_API = "https://api.pipecat.daily.co/v1/public";
 const PCC_API_KEY =
@@ -217,6 +218,20 @@ export async function POST(request: NextRequest) {
     const rawBody = (await request.json().catch(() => null)) as unknown;
     const body = isRecord(rawBody) ? rawBody : {};
 
+    // Local mode: proxy to dev.py running on :8000
+    if (PCC_AGENT_NAME === "local") {
+      const res = await fetch("http://localhost:8000/api/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`Local agent server error (${res.status}): ${text}`);
+      }
+      return NextResponse.json(await res.json());
+    }
+
     await cleanupAllActiveSessions();
     // Brief pause to let PCC fully release previous containers before starting new ones.
     await new Promise((r) => setTimeout(r, 1500));
@@ -236,8 +251,8 @@ export async function POST(request: NextRequest) {
 
       if (!hasExplicitScenario && !hasExplicitTopic) {
         agents = [
-          { name: "Sarah", prompt: "", voice_id: DEFAULT_VOICE_1 },
-          { name: "Mike", prompt: "", voice_id: DEFAULT_VOICE_2 },
+          { name: DEFAULT_AGENT_1_NAME, prompt: "", voice_id: DEFAULT_VOICE_1 },
+          { name: DEFAULT_AGENT_2_NAME, prompt: "", voice_id: DEFAULT_VOICE_2 },
         ];
       } else {
         const scenarioSlug =
@@ -254,21 +269,24 @@ export async function POST(request: NextRequest) {
             : [];
           const a1 = isRecord(scenarioAgents[0]) ? scenarioAgents[0] : {};
           const a2 = isRecord(scenarioAgents[1]) ? scenarioAgents[1] : {};
-          const shared = { topic };
+          const vars = syncSharedVariables({
+            agent1: { topic, ...(isRecord(a1.defaults) ? a1.defaults : {}) },
+            agent2: { topic, ...(isRecord(a2.defaults) ? a2.defaults : {}) },
+          });
           agents = [
             {
-              name: typeof a1.name === "string" ? a1.name : "Sarah",
+              name: typeof a1.name === "string" ? a1.name : DEFAULT_AGENT_1_NAME,
               prompt: replaceVariables(
                 typeof a1.prompt === "string" ? a1.prompt : "",
-                { ...shared, ...(isRecord(a1.defaults) ? a1.defaults : {}) },
+                vars.agent1,
               ),
               voice_id: typeof a1.voice_id === "string" ? a1.voice_id : DEFAULT_VOICE_1,
             },
             {
-              name: typeof a2.name === "string" ? a2.name : "Mike",
+              name: typeof a2.name === "string" ? a2.name : DEFAULT_AGENT_2_NAME,
               prompt: replaceVariables(
                 typeof a2.prompt === "string" ? a2.prompt : "",
-                { ...shared, ...(isRecord(a2.defaults) ? a2.defaults : {}) },
+                vars.agent2,
               ),
               voice_id: typeof a2.voice_id === "string" ? a2.voice_id : DEFAULT_VOICE_2,
             },
@@ -300,7 +318,7 @@ export async function POST(request: NextRequest) {
 
       try {
         // 2. Generate tokens
-        // Agent 1 (goes_first) needs is_owner to call start_transcription.
+        // System agent (goes_first) needs is_owner to call start_transcription.
         const [token1, token2, browserToken] = await Promise.all([
           getDailyToken(room.name, true, agent1.name),
           getDailyToken(room.name, false, agent2.name),
@@ -308,8 +326,8 @@ export async function POST(request: NextRequest) {
         ]);
 
         // 3. Start agents on Pipecat Cloud sequentially.
-        // Sarah (goes_first) must be started first so she joins and
-        // starts transcription before Mike arrives.
+        // System agent (goes_first) must be started first so it joins and
+        // starts transcription before User agent arrives.
         const session1 = await startPCCSession({
           room_url: room.url,
           token: token1,
