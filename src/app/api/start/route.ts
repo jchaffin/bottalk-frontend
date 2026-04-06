@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { DEFAULT_VOICE_1, DEFAULT_VOICE_2, PCC_AGENT_NAME } from "@/lib/config";
+import { localAgentBaseUrl, shouldUseLocalAgentServer } from "@/lib/agent-backend";
 import { resolveAgents } from "@/lib/resolve-agents";
 
 const PCC_API = "https://api.pipecat.daily.co/v1/public";
@@ -78,10 +79,8 @@ export async function POST(request: NextRequest) {
     const raw = await request.json().catch(() => null);
     const body = isRecord(raw) ? raw : {};
 
-    const agentApiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-    const useLocal = process.env.NEXT_PUBLIC_API_URL || !PCC_API_KEY || PCC_AGENT_NAME === "local";
-    if (useLocal) {
-      const base = agentApiUrl.replace(/\/$/, "");
+    if (shouldUseLocalAgentServer()) {
+      const base = localAgentBaseUrl();
       const res = await fetch(`${base}/api/start`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -89,6 +88,16 @@ export async function POST(request: NextRequest) {
       });
       if (!res.ok) throw new Error(`Local agent error (${res.status}): ${await res.text()}`);
       return NextResponse.json(await res.json());
+    }
+
+    if (!PCC_API_KEY) {
+      return NextResponse.json(
+        {
+          detail:
+            "Missing PIPECAT_CLOUD_PUBLIC_API_KEY. Add it in Vercel → Settings → Environment Variables (Pipecat Cloud Dashboard → API Keys → Public).",
+        },
+        { status: 500 },
+      );
     }
 
     await cleanupSessions();

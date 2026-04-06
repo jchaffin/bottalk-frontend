@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { PCC_AGENT_NAME } from "@/lib/config";
+import { localAgentBaseUrl, shouldUseLocalAgentServer } from "@/lib/agent-backend";
 
 const PCC_API = "https://api.pipecat.daily.co/v1/public";
 const PCC_API_KEY =
@@ -28,10 +29,8 @@ async function stopPCCSession(sessionId: string): Promise<void> {
 }
 
 export async function POST() {
-  const agentApiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-  const useLocalAgents = process.env.NEXT_PUBLIC_API_URL || !PCC_API_KEY || PCC_AGENT_NAME === "local";
-  if (useLocalAgents) {
-    const base = agentApiUrl.replace(/\/$/, "");
+  if (shouldUseLocalAgentServer()) {
+    const base = localAgentBaseUrl();
     await fetch(`${base}/api/stop`, { method: "POST" }).catch(() => {});
     return NextResponse.json({ status: "stopped" });
   }
