@@ -36,7 +36,7 @@ export default function CallPage() {
   const [showCustom, setShowCustom] = useState(false);
   const [prompts, setPrompts] = useState<GeneratedPrompts | null>(null);
   const [scenarioLabel, setScenarioLabel] = useState<string | null>(null);
-  const [variables, setVariables] = useState<AgentVariables>({ agent1: {}, agent2: {} });
+  const [variables, setVariables] = useState<AgentVariables>({ system: {}, user: {} });
   const [roomUrl, setRoomUrl] = useState<string | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [agentSessions, setAgentSessions] = useState<string[] | undefined>();
@@ -58,10 +58,10 @@ export default function CallPage() {
       setAgentColors(session.agentColors);
       setScenarioLabel(session.scenarioLabel);
       setPrompts({
-        agent1: { name: session.agentNames[0], role: "", prompt: "", voice_id: "" },
-        agent2: { name: session.agentNames[1], role: "", prompt: "", voice_id: "" },
+        system: { name: session.agentNames[0], role: "", prompt: "", voice_id: "" },
+        user: { name: session.agentNames[1], role: "", prompt: "", voice_id: "" },
       });
-      setVariables({ agent1: { name: session.agentNames[0] }, agent2: { name: session.agentNames[1] } });
+      setVariables({ system: { name: session.agentNames[0] }, user: { name: session.agentNames[1] } });
       setPhase("active");
     }
   }, []);
@@ -77,13 +77,13 @@ export default function CallPage() {
     setScenarioLabel(scenario.title);
     const raw = scenarioToPrompts(scenario);
     const prompts: GeneratedPrompts = {
-      agent1: { ...raw.agent1, name: nameForVoice(raw.agent1.voice_id || DEFAULT_VOICE_1) || raw.agent1.name },
-      agent2: { ...raw.agent2, name: nameForVoice(raw.agent2.voice_id || DEFAULT_VOICE_2) || raw.agent2.name },
+      system: { ...raw.system, name: nameForVoice(raw.system.voice_id || DEFAULT_VOICE_1) || raw.system.name },
+      user: { ...raw.user, name: nameForVoice(raw.user.voice_id || DEFAULT_VOICE_2) || raw.user.name },
     };
     const defaults = collectDefaults(scenario);
     setVariables({
-      agent1: { ...defaults.agent1, name: prompts.agent1.name },
-      agent2: { ...defaults.agent2, name: prompts.agent2.name },
+      system: { ...defaults.system, name: prompts.system.name },
+      user: { ...defaults.user, name: prompts.user.name },
     });
     setPrompts(prompts);
     setPhase("preview");
@@ -94,30 +94,30 @@ export default function CallPage() {
     setPhase("generating");
     try {
       const result = await generatePrompts(customTopic.trim());
-      const s1 = splitPromptAndRules(result.agent1);
-      const s2 = splitPromptAndRules(result.agent2);
-      const voice1 = voiceForName(result.agent1.name) || DEFAULT_VOICE_1;
-      const voice2 = voiceForName(result.agent2.name) || DEFAULT_VOICE_2;
+      const s1 = splitPromptAndRules(result.system);
+      const s2 = splitPromptAndRules(result.user);
+      const voice1 = voiceForName(result.system.name) || DEFAULT_VOICE_1;
+      const voice2 = voiceForName(result.user.name) || DEFAULT_VOICE_2;
       const promptsWithRules: GeneratedPrompts = {
-        agent1: {
-          ...result.agent1,
+        system: {
+          ...result.system,
           prompt: s1.prompt,
           rules: s1.rules,
           voice_id: voice1,
-          name: nameForVoice(voice1) || result.agent1.name,
+          name: nameForVoice(voice1) || result.system.name,
         },
-        agent2: {
-          ...result.agent2,
+        user: {
+          ...result.user,
           prompt: s2.prompt,
           rules: s2.rules,
           voice_id: voice2,
-          name: nameForVoice(voice2) || result.agent2.name,
+          name: nameForVoice(voice2) || result.user.name,
         },
       };
       const shared = { topic: customTopic.trim() };
       setVariables({
-        agent1: { ...shared, ...(result.agent1.defaults ?? {}), name: promptsWithRules.agent1.name },
-        agent2: { ...shared, ...(result.agent2.defaults ?? {}), name: promptsWithRules.agent2.name },
+        system: { ...shared, ...(result.system.defaults ?? {}), name: promptsWithRules.system.name },
+        user: { ...shared, ...(result.user.defaults ?? {}), name: promptsWithRules.user.name },
       });
       setScenarioLabel(customTopic.trim());
       setPrompts(promptsWithRules);
@@ -139,15 +139,15 @@ export default function CallPage() {
     }
     const promptsResolved = scenarioToPrompts(defaultScenario);
     const variablesResolved = collectDefaults(defaultScenario);
-    const fullPrompt1 = systemPromptFromAgent(promptsResolved.agent1);
-    const fullPrompt2 = systemPromptFromAgent(promptsResolved.agent2);
-    const resolvedPrompt1 = replaceVariables(fullPrompt1, variablesResolved.agent1);
-    const resolvedPrompt2 = replaceVariables(fullPrompt2, variablesResolved.agent2);
+    const fullPrompt1 = systemPromptFromAgent(promptsResolved.system);
+    const fullPrompt2 = systemPromptFromAgent(promptsResolved.user);
+    const resolvedPrompt1 = replaceVariables(fullPrompt1, variablesResolved.system);
+    const resolvedPrompt2 = replaceVariables(fullPrompt2, variablesResolved.user);
     try {
       const res = await startConversation({
         agents: [
-          { name: promptsResolved.agent1.name, role: promptsResolved.agent1.role, prompt: resolvedPrompt1, voice_id: promptsResolved.agent1.voice_id || DEFAULT_VOICE_1 },
-          { name: promptsResolved.agent2.name, role: promptsResolved.agent2.role, prompt: resolvedPrompt2, voice_id: promptsResolved.agent2.voice_id || DEFAULT_VOICE_2 },
+          { name: promptsResolved.system.name, role: promptsResolved.system.role, prompt: resolvedPrompt1, voice_id: promptsResolved.system.voice_id || DEFAULT_VOICE_1 },
+          { name: promptsResolved.user.name, role: promptsResolved.user.role, prompt: resolvedPrompt2, voice_id: promptsResolved.user.voice_id || DEFAULT_VOICE_2 },
         ],
       });
       setRoomUrl(res.roomUrl);
@@ -168,14 +168,14 @@ export default function CallPage() {
     setError(null);
     setPhase("starting");
     try {
-      const fullPrompt1 = systemPromptFromAgent(prompts.agent1);
-      const fullPrompt2 = systemPromptFromAgent(prompts.agent2);
-      const resolvedPrompt1 = replaceVariables(fullPrompt1, variables.agent1);
-      const resolvedPrompt2 = replaceVariables(fullPrompt2, variables.agent2);
+      const fullPrompt1 = systemPromptFromAgent(prompts.system);
+      const fullPrompt2 = systemPromptFromAgent(prompts.user);
+      const resolvedPrompt1 = replaceVariables(fullPrompt1, variables.system);
+      const resolvedPrompt2 = replaceVariables(fullPrompt2, variables.user);
       const res = await startConversation({
         agents: [
-          { name: prompts.agent1.name, role: prompts.agent1.role, prompt: resolvedPrompt1, voice_id: prompts.agent1.voice_id || DEFAULT_VOICE_1 },
-          { name: prompts.agent2.name, role: prompts.agent2.role, prompt: resolvedPrompt2, voice_id: prompts.agent2.voice_id || DEFAULT_VOICE_2 },
+          { name: prompts.system.name, role: prompts.system.role, prompt: resolvedPrompt1, voice_id: prompts.system.voice_id || DEFAULT_VOICE_1 },
+          { name: prompts.user.name, role: prompts.user.role, prompt: resolvedPrompt2, voice_id: prompts.user.voice_id || DEFAULT_VOICE_2 },
         ],
       });
       setRoomUrl(res.roomUrl);
@@ -196,7 +196,7 @@ export default function CallPage() {
     setPhase("idle");
     setPrompts(null);
     setScenarioLabel(null);
-    setVariables({ agent1: {}, agent2: {} });
+    setVariables({ system: {}, user: {} });
     setAgentColors(DEFAULT_AGENT_COLORS);
     setShowCustom(false);
     setCustomTopic("");
@@ -210,7 +210,7 @@ export default function CallPage() {
   function handleBack() {
     setPrompts(null);
     setScenarioLabel(null);
-    setVariables({ agent1: {}, agent2: {} });
+    setVariables({ system: {}, user: {} });
     setAgentColors(DEFAULT_AGENT_COLORS);
     setPhase("idle");
   }
@@ -221,7 +221,7 @@ export default function CallPage() {
   }
 
   function updateAgent(
-    slot: "agent1" | "agent2",
+    slot: "system" | "user",
     field: "name" | "role" | "prompt" | "rules" | "voice_id",
     value: string,
   ) {
@@ -243,7 +243,7 @@ export default function CallPage() {
   }
 
   const agentNames: [string, string] = prompts
-    ? [prompts.agent1.name, prompts.agent2.name]
+    ? [prompts.system.name, prompts.user.name]
     : [SYSTEM_AGENT_LABEL, USER_AGENT_LABEL];
 
   const subtitle =

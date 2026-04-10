@@ -65,8 +65,8 @@ export async function resolveAgents(body: Record<string, unknown>): Promise<[Age
     const a1 = isRecord(scenario.agents[0]) ? scenario.agents[0] : {};
     const a2 = isRecord(scenario.agents[1]) ? scenario.agents[1] : {};
     const vars = syncSharedVariables({
-      agent1: { topic, ...(isRecord(a1.defaults) ? a1.defaults : {}) },
-      agent2: { topic, ...(isRecord(a2.defaults) ? a2.defaults : {}) },
+      system: { topic, ...(isRecord(a1.defaults) ? a1.defaults : {}) },
+      user: { topic, ...(isRecord(a2.defaults) ? a2.defaults : {}) },
     });
     const p1 = typeof a1.prompt === "string" ? a1.prompt : "";
     const r1 = typeof a1.rules === "string" ? a1.rules : "";
@@ -77,12 +77,12 @@ export async function resolveAgents(body: Record<string, unknown>): Promise<[Age
     return [
       {
         name: typeof a1.name === "string" ? a1.name : DEFAULT_AGENT_1_NAME,
-        prompt: replaceVariables(fullPrompt1, vars.agent1),
+        prompt: replaceVariables(fullPrompt1, vars.system),
         voice_id: typeof a1.voice_id === "string" ? a1.voice_id : DEFAULT_VOICE_1,
       },
       {
         name: typeof a2.name === "string" ? a2.name : DEFAULT_AGENT_2_NAME,
-        prompt: replaceVariables(fullPrompt2, vars.agent2),
+        prompt: replaceVariables(fullPrompt2, vars.user),
         voice_id: typeof a2.voice_id === "string" ? a2.voice_id : DEFAULT_VOICE_2,
       },
     ];

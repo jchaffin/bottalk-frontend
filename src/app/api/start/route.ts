@@ -64,13 +64,16 @@ async function cleanupSessions(): Promise<void> {
   if (sessions.length === 0) return;
   const ids = sessions.flatMap((s: { agentSessions: string[] }) => s.agentSessions);
   const rooms = sessions.map((s: { roomName: string }) => s.roomName);
-  await Promise.allSettled(ids.map(stopPCCSession));
+
+  // Delete rooms FIRST — force-disconnects all participants immediately
   await Promise.allSettled(
     rooms.map((name: string) => fetch(`https://api.daily.co/v1/rooms/${name}`, {
       method: "DELETE",
       headers: { Authorization: `Bearer ${DAILY_API_KEY}` },
     }))
   );
+  // Then stop PCC sessions (may already be dying from room deletion)
+  await Promise.allSettled(ids.map(stopPCCSession));
   await prisma.session.deleteMany({ where: { id: { in: sessions.map((s: { id: string }) => s.id) } } }).catch(() => {});
 }
 
@@ -101,10 +104,10 @@ export async function POST(request: NextRequest) {
     }
 
     await cleanupSessions();
-    await new Promise((r) => setTimeout(r, 300)); // Brief pause for cleanup propagation
+    await new Promise((r) => setTimeout(r, 500));
 
-    const [agent1, agent2] = await resolveAgents(body);
-    const allNames = [agent1.name, agent2.name];
+    const [systemAgent, userAgent] = await resolveAgents(body);
+    const allNames = [systemAgent.name, userAgent.name];
     const maxTurns = 20;
 
     const room = await dailyFetch("/rooms", {
@@ -128,8 +131,8 @@ export async function POST(request: NextRequest) {
     let session2: { sessionId: string };
     try {
       const [t1, t2, tBrowser] = await Promise.all([
-        getToken(true, agent1.name),
-        getToken(false, agent2.name),
+        getToken(true, systemAgent.name),
+        getToken(false, userAgent.name),
         getToken(true, "Observer"),
       ]);
 
@@ -137,9 +140,9 @@ export async function POST(request: NextRequest) {
         startPCCSession({
           room_url: room.url,
           token: t1.token,
-          name: agent1.name,
-          system_prompt: agent1.prompt || "",
-          voice_id: agent1.voice_id || DEFAULT_VOICE_1,
+          name: systemAgent.name,
+          system_prompt: systemAgent.prompt || "",
+          voice_id: systemAgent.voice_id || DEFAULT_VOICE_1,
           goes_first: true,
           known_agents: allNames,
           max_turns: maxTurns,
@@ -147,9 +150,9 @@ export async function POST(request: NextRequest) {
         startPCCSession({
           room_url: room.url,
           token: t2.token,
-          name: agent2.name,
-          system_prompt: agent2.prompt || "",
-          voice_id: agent2.voice_id || DEFAULT_VOICE_2,
+          name: userAgent.name,
+          system_prompt: userAgent.prompt || "",
+          voice_id: userAgent.voice_id || DEFAULT_VOICE_2,
           goes_first: false,
           known_agents: allNames,
           max_turns: maxTurns,

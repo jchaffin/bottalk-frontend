@@ -54,8 +54,10 @@ export function systemPromptFromAgent(p: AgentPrompt): string {
 }
 
 export interface GeneratedPrompts {
-  agent1: AgentPrompt;
-  agent2: AgentPrompt;
+  /** The bot being A/B tested (goes first, evaluated by KPIs). */
+  system: AgentPrompt;
+  /** The user-simulator bot (responds, stays constant across tests). */
+  user: AgentPrompt;
 }
 
 export interface StartOptions {
@@ -129,21 +131,21 @@ export async function quickStartConversation(): Promise<{
   }
   const promptsResolved = scenarioToPrompts(defaultScenario);
   const variablesResolved = collectDefaults(defaultScenario);
-  const fullPrompt1 = systemPromptFromAgent(promptsResolved.agent1);
-  const fullPrompt2 = systemPromptFromAgent(promptsResolved.agent2);
+  const fullPrompt1 = systemPromptFromAgent(promptsResolved.system);
+  const fullPrompt2 = systemPromptFromAgent(promptsResolved.user);
   const { replaceVariables } = await import("./config");
-  const resolvedPrompt1 = replaceVariables(fullPrompt1, variablesResolved.agent1);
-  const resolvedPrompt2 = replaceVariables(fullPrompt2, variablesResolved.agent2);
+  const resolvedPrompt1 = replaceVariables(fullPrompt1, variablesResolved.system);
+  const resolvedPrompt2 = replaceVariables(fullPrompt2, variablesResolved.user);
   const res = await startConversation({
     agents: [
-      { name: promptsResolved.agent1.name, role: promptsResolved.agent1.role, prompt: resolvedPrompt1, voice_id: promptsResolved.agent1.voice_id || DEFAULT_VOICE_1 },
-      { name: promptsResolved.agent2.name, role: promptsResolved.agent2.role, prompt: resolvedPrompt2, voice_id: promptsResolved.agent2.voice_id || DEFAULT_VOICE_2 },
+      { name: promptsResolved.system.name, role: promptsResolved.system.role, prompt: resolvedPrompt1, voice_id: promptsResolved.system.voice_id || DEFAULT_VOICE_1 },
+      { name: promptsResolved.user.name, role: promptsResolved.user.role, prompt: resolvedPrompt2, voice_id: promptsResolved.user.voice_id || DEFAULT_VOICE_2 },
     ],
   });
   const { DEFAULT_AGENT_COLORS } = await import("./config");
   return {
     ...res,
-    agentNames: [promptsResolved.agent1.name, promptsResolved.agent2.name],
+    agentNames: [promptsResolved.system.name, promptsResolved.user.name],
     agentColors: DEFAULT_AGENT_COLORS,
     scenarioLabel: defaultScenario.title,
   };
@@ -177,16 +179,16 @@ export async function fetchScenarios(): Promise<Scenario[]> {
 
 /** Per-agent variable maps. */
 export interface AgentVariables {
-  agent1: Record<string, string>;
-  agent2: Record<string, string>;
+  system: Record<string, string>;
+  user: Record<string, string>;
 }
 
 /** Collect default variable values per agent from a scenario. Topic (call subject) can override scenario title via defaults.topic. */
 export function collectDefaults(scenario: Scenario): AgentVariables {
   const shared: Record<string, string> = { topic: scenario.title };
-  const a1Defaults = { ...shared, ...(scenario.agents[0]?.defaults ?? {}) };
-  const a2Defaults = { ...shared, ...(scenario.agents[1]?.defaults ?? {}) };
-  return { agent1: a1Defaults, agent2: a2Defaults };
+  const systemDefaults = { ...shared, ...(scenario.agents[0]?.defaults ?? {}) };
+  const userDefaults = { ...shared, ...(scenario.agents[1]?.defaults ?? {}) };
+  return { system: systemDefaults, user: userDefaults };
 }
 
 /** Split legacy prompt (with embedded Rules) into prompt + rules for display. */
@@ -204,28 +206,28 @@ export function splitPromptAndRules(agent: AgentPrompt): { prompt: string; rules
   return { prompt: agent.prompt, rules: "" };
 }
 
-/** Convert a DB scenario into editable prompts (keeps {{variables}} intact). */
+/** Convert a DB scenario into editable prompts (keeps {{variables}} intact). agents[0]=system, agents[1]=user. */
 export function scenarioToPrompts(scenario: Scenario): GeneratedPrompts {
-  const a1 = scenario.agents[0] as AgentPrompt;
-  const a2 = scenario.agents[1] as AgentPrompt;
-  const s1 = splitPromptAndRules(a1);
-  const s2 = splitPromptAndRules(a2);
+  const sys = scenario.agents[0] as AgentPrompt;
+  const usr = scenario.agents[1] as AgentPrompt;
+  const s1 = splitPromptAndRules(sys);
+  const s2 = splitPromptAndRules(usr);
   return {
-    agent1: {
-      name: a1.name,
-      role: a1.role,
+    system: {
+      name: sys.name,
+      role: sys.role,
       prompt: s1.prompt,
       rules: s1.rules,
-      voice_id: a1.voice_id || voiceForName(a1.name) || DEFAULT_VOICE_1,
-      defaults: a1.defaults,
+      voice_id: sys.voice_id || voiceForName(sys.name) || DEFAULT_VOICE_1,
+      defaults: sys.defaults,
     },
-    agent2: {
-      name: a2.name,
-      role: a2.role,
+    user: {
+      name: usr.name,
+      role: usr.role,
       prompt: s2.prompt,
       rules: s2.rules,
-      voice_id: a2.voice_id || voiceForName(a2.name) || DEFAULT_VOICE_2,
-      defaults: a2.defaults,
+      voice_id: usr.voice_id || voiceForName(usr.name) || DEFAULT_VOICE_2,
+      defaults: usr.defaults,
     },
   };
 }

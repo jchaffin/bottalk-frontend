@@ -17,8 +17,8 @@ const agentSchema = z.object({
 });
 
 const schema = z.object({
-  agent1: agentSchema,
-  agent2: agentSchema,
+  system: agentSchema,
+  user: agentSchema,
 });
 
 /** Convert the array-of-objects from the LLM into a plain Record. */
@@ -26,9 +26,13 @@ function toDefaultsRecord(arr: { variable: string; value: string }[]): Record<st
   return Object.fromEntries(arr.map(({ variable, value }) => [variable, value]));
 }
 
-const SYSTEM_PROMPT = `You are a conversation designer. Given a topic, generate system prompts for two AI voice agents who will have a live phone conversation.
+const SYSTEM_PROMPT = `You are a conversation designer for an A/B testing platform. Given a topic, generate system prompts for two AI voice agents who will have a live phone conversation.
 
-Choose fitting names for each agent based on the topic. Assign complementary roles (e.g. sales rep / customer, interviewer / candidate, agent / caller, consultant / client). System agent always initiates the conversation.
+There are exactly two roles:
+- "system": The AI bot being tested/evaluated. This is the agent whose performance is measured by KPIs. It always initiates the conversation. Design it with clear goals and techniques to evaluate (e.g. sales rep, interviewer, support agent, consultant).
+- "user": The user-simulator bot. It models a realistic human counterpart (e.g. customer, candidate, caller, client). It responds naturally to the system bot. It should be consistent and realistic so that A/B tests of different system bot configurations are comparable.
+
+Choose fitting names for each agent based on the topic.
 
 IMPORTANT: Use {{variable_name}} template syntax for ALL specific nouns in the prompts — company names, product names, job titles, prices, team sizes, pain points, backstory details, etc. This allows users to customize the scenario. Use snake_case for variable names.
 
@@ -73,8 +77,8 @@ export async function POST(request: NextRequest) {
     // so the rest of the app receives the expected shape.
     const response = output
       ? {
-          agent1: { ...output.agent1, defaults: toDefaultsRecord(output.agent1.defaults) },
-          agent2: { ...output.agent2, defaults: toDefaultsRecord(output.agent2.defaults) },
+          system: { ...output.system, defaults: toDefaultsRecord(output.system.defaults) },
+          user: { ...output.user, defaults: toDefaultsRecord(output.user.defaults) },
         }
       : output;
 

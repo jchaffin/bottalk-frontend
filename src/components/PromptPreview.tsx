@@ -5,14 +5,16 @@ import { VOICES, DEFAULT_VOICE_1, DEFAULT_VOICE_2, nameForVoice, type GeneratedP
 import { Loader2, Play } from "lucide-react";
 import TemplateEditor from "./TemplateEditor";
 
+type Slot = "system" | "user";
+
 interface PromptPreviewProps {
   prompts: GeneratedPrompts;
   variables: AgentVariables;
   agentColors: [string, string];
   starting?: boolean;
-  onUpdate: (slot: "agent1" | "agent2", field: "name" | "role" | "prompt" | "rules" | "voice_id", value: string) => void;
-  onVariableChange: (slot: "agent1" | "agent2", name: string, value: string) => void;
-  onSyncVariables?: (sourceSlot: "agent1" | "agent2") => void | Promise<void>;
+  onUpdate: (slot: Slot, field: "name" | "role" | "prompt" | "rules" | "voice_id", value: string) => void;
+  onVariableChange: (slot: Slot, name: string, value: string) => void;
+  onSyncVariables?: (sourceSlot: Slot) => void | Promise<void>;
   onColorChange: (idx: number, color: string) => void;
   onBack: () => void;
   onStart: () => void;
@@ -32,8 +34,8 @@ export default function PromptPreview({
   onStart,
 }: PromptPreviewProps) {
   const colorRefs = [useRef<HTMLInputElement>(null), useRef<HTMLInputElement>(null)];
-  const [mobileTab, setMobileTab] = useState<"agent1" | "agent2">("agent1");
-  const slots = ["agent1", "agent2"] as const;
+  const [mobileTab, setMobileTab] = useState<Slot>("system");
+  const slots: readonly Slot[] = ["system", "user"];
   return (
     <div className="w-full min-w-0 max-w-2xl space-y-6 pb-28 sm:pb-0">
       {/* Mobile: tab switcher */}
@@ -87,14 +89,19 @@ export default function PromptPreview({
                 />
               </div>
               <div className="flex-1 space-y-1">
-                <span className="block text-sm font-semibold text-foreground">
-                  {nameForVoice(prompts[slot].voice_id || (slot === "agent1" ? DEFAULT_VOICE_1 : DEFAULT_VOICE_2)) || prompts[slot].name || `Agent ${idx + 1}`}
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="block text-sm font-semibold text-foreground">
+                    {nameForVoice(prompts[slot].voice_id || (slot === "system" ? DEFAULT_VOICE_1 : DEFAULT_VOICE_2)) || prompts[slot].name || `Agent ${idx + 1}`}
+                  </span>
+                  <span className={`text-[10px] font-medium uppercase tracking-wider px-1.5 py-0.5 rounded ${slot === "system" ? "bg-accent/15 text-accent" : "bg-muted/20 text-muted"}`}>
+                    {slot === "system" ? "System" : "User"}
+                  </span>
+                </div>
                 <input
                   value={prompts[slot].role}
                   onChange={(e) => onUpdate(slot, "role", e.target.value)}
                   disabled={starting}
-                  placeholder="e.g. Sales rep, Support agent"
+                  placeholder={slot === "system" ? "e.g. Sales rep, Support agent" : "e.g. Customer, Candidate"}
                   className="input-inline text-xs text-muted"
                 />
               </div>
@@ -142,14 +149,14 @@ export default function PromptPreview({
             >
               <label className="text-sm font-medium text-foreground mb-1.5 block">Voice</label>
               <select
-                value={prompts[slot].voice_id || (slot === "agent1" ? DEFAULT_VOICE_1 : DEFAULT_VOICE_2)}
+                value={prompts[slot].voice_id || (slot === "system" ? DEFAULT_VOICE_1 : DEFAULT_VOICE_2)}
                 onChange={(e) => {
                   const voiceId = e.target.value;
                   onUpdate(slot, "voice_id", voiceId);
                 }}
                 disabled={starting}
                 className="input-bordered cursor-pointer w-full"
-                aria-label={`Voice for agent ${slot === "agent1" ? 1 : 2}`}
+                aria-label={`Voice for ${slot} agent`}
               >
                 {VOICES.map((v) => (
                   <option key={v.id} value={v.id}>{v.label}</option>

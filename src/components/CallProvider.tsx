@@ -378,24 +378,6 @@ export default function CallProvider({
           function applyMetric(key: MetricKey, ms: number) {
             if (!pendingMetrics[agent]) pendingMetrics[agent] = { agent };
             pendingMetrics[agent][key] = ms;
-
-            for (let i = linesSnapshot.length - 1; i >= 0; i--) {
-              if (linesSnapshot[i].speaker === agent && linesSnapshot[i].metrics) {
-                linesSnapshot[i] = {
-                  ...linesSnapshot[i],
-                  metrics: { ...linesSnapshot[i].metrics, [key]: ms },
-                };
-                queueFlush();
-                break;
-              }
-            }
-            for (let i = metricsSnapshot.length - 1; i >= 0; i--) {
-              if (metricsSnapshot[i].agent === agent) {
-                metricsSnapshot[i] = { ...metricsSnapshot[i], [key]: ms };
-                setLiveMetrics([...metricsSnapshot]);
-                break;
-              }
-            }
           }
 
           if (type === "ttfb") {
